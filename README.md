@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="LunoPeak Logo" width="160" />
+</p>
+
 # LunoPeak
 
 ![LunoPeak](https://img.shields.io/badge/version-1.0.0-blue.svg)
@@ -113,4 +117,4 @@ LunoPeak is **free to use** with no time restrictions for personal and commercia
 
 ---
 
-**© 2025-2026 LunoPeak** • Made with ❤️ for developers
+**© 2026 LunoPeak** • Made with ❤️ for developers
