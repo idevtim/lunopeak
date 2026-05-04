@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: FAQ
+    url: https://lunopeak.com/faq
+    about: Check our frequently asked questions for common issues and solutions
+  - name: Email Support
+    url: mailto:support@lunopeak.com
+    about: Contact our support team directly
