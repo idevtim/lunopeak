@@ -4,7 +4,7 @@
 
 # LunoPeak
 
-![LunoPeak](https://img.shields.io/badge/version-1.0.0-blue.svg)
+![LunoPeak](https://img.shields.io/badge/version-1.0.1-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
 
 LunoPeak is a local-first, cross-platform desktop dashboard that gives you a real-time, unified view of your AI-assisted development environment. One window for every repo, session, agent, and config — no account, no cloud sync, no telemetry.
@@ -40,7 +40,7 @@ All versions include in-app release notes and update notifications to keep you i
 - **Persistent Window State** - Window size, position, and last-viewed route remembered across launches
 
 ### Activity & Sessions
-- **Live View** - Real-time monitoring of running Claude Code sessions and tools
+- **Live View** - Real-time monitoring of running Claude Code and Codex sessions, with each process matched to its own agent's transcript so a codex row never borrows a claude session's last action when both are running in the same folder
 - **Sessions History** - Browse every past session with timing, repo context, and outcomes
 - **Session Replay** - Step through any past session turn-by-turn with full message context
 - **Transcripts** - Full-text searchable transcript archive across every project
