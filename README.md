@@ -4,7 +4,7 @@
 
 # LunoPeak
 
-![LunoPeak](https://img.shields.io/badge/version-1.0.1-blue.svg)
+![LunoPeak](https://img.shields.io/badge/version-1.1.0-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
 
 LunoPeak is a local-first, cross-platform desktop dashboard that gives you a real-time, unified view of your AI-assisted development environment. One window for every repo, session, agent, and config — no account, no cloud sync, no telemetry.
@@ -36,7 +36,7 @@ All versions include in-app release notes and update notifications to keep you i
 ### Overview
 - **Dashboard** - At-a-glance summary of every active repo, session, and agent
 - **Assistant** - Built-in chat assistant with full awareness of your environment
-- **Tray Integration** - Native tray icon with quick navigation to any view
+- **Tray Integration** - Native tray icon with provider brand marks, live usage windows, time-until-reset countdown, on-demand refresh, and a headline-window toggle to pin the tray percent to either the 5h or weekly window
 - **Persistent Window State** - Window size, position, and last-viewed route remembered across launches
 
 ### Activity & Sessions
@@ -63,7 +63,7 @@ All versions include in-app release notes and update notifications to keep you i
 - **Hooks** - Audit every configured hook, scoped per repo
 
 ### Health & Hygiene
-- **Hygiene** - Actionable issues with one-click fixes: stale branches, missing CLAUDE.md, ungitignored `.env`, missing `.gitignore`, uncommitted changes
+- **Hygiene** - Actionable issues with one-click fixes: stale branches, missing CLAUDE.md, ungitignored `.env`, missing `.gitignore`, uncommitted changes, and background listeners. One-click handoff to the Assistant to diagnose what to fix first
 - **Lint** - Aggregate eslint, prettier, ruff, stylelint, and editorconfig configs across every repo
 - **Deps** - Manifest summaries across npm, cargo, pip, poetry, go, and bundler
 - **Env** - `.env` files surfaced with key inventory, gitignore status, and `.env.example` presence
@@ -76,6 +76,8 @@ All versions include in-app release notes and update notifications to keep you i
 ### Privacy & Security
 - **Fully Local** - All data stays on your machine; no account, no cloud sync
 - **No Telemetry** - LunoPeak does not phone home or collect usage data
+- **API Keys in the OS Keychain** - Anthropic, OpenAI, and Gemini keys are stored in macOS Keychain, Windows Credential Manager, or Linux Secret Service — never in plaintext on disk
+- **Hardened "Open in…" Actions** - Folder paths are passed as separate argv elements with proper per-platform quoting, so shell metacharacters in directory names can't inject commands
 - **Native Performance** - Built on Tauri 2 (Rust) for a small footprint (~150 MB on disk, ~120 MB resident) and fast startup
 - **Outbound Only When You Ask** - Network traffic is limited to provider APIs (Anthropic, OpenAI, Gemini) when you use the Assistant, and the update endpoint when enabled
 
