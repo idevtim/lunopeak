@@ -37,7 +37,7 @@ All versions include in-app release notes and update notifications to keep you i
 - **Dashboard** - At-a-glance summary of every active repo, session, and agent
 - **Assistant** - Built-in chat assistant with full awareness of your environment
 - **Tray Integration** - Native tray icon with quick navigation to any view
-- **Multiple Workspaces** - Independent windows for parallel workflows
+- **Persistent Window State** - Window size, position, and last-viewed route remembered across launches
 
 ### Activity & Sessions
 - **Live View** - Real-time monitoring of running Claude Code sessions and tools
@@ -49,25 +49,25 @@ All versions include in-app release notes and update notifications to keep you i
 
 ### Code Intelligence
 - **Repos** - Unified list of every project on your machine with health, activity, and AI usage signals
-- **Repo Detail** - Per-repo deep dive: recent sessions, diffs, costs, hygiene
+- **Repo Detail** - CLAUDE.md preview, attached skills, and quick actions (open in Claude / VS Code / terminal, copy path, git pull)
 - **Work Graph** - Visualize relationships between repos, branches, and active work
 - **Timeline** - Cross-repo timeline of commits, sessions, and key events
 - **Diffs** - Browse uncommitted and recent diffs across every repo from one place
 - **Repo Pulse** - Activity heatmaps and rolling-window summaries for each project
 
 ### Configuration
-- **Setup** - Centralized view of your Claude Code configuration across global and project scopes
-- **Skills** - Browse and manage installed skills with usage stats
-- **Agents** - Inventory of every subagent definition with last-used info
-- **Memory** - Inspect and edit Claude Code memory files (CLAUDE.md, MEMORY.md) per project
-- **Hooks** - Audit configured hooks and see when they fire
+- **Setup** - Inventory of Claude Code and Codex configuration: MCP servers, plugins, per-repo completeness
+- **Skills** - Browse every Claude skill across global and repo scopes with body preview
+- **Agents** - Inventory of every Claude agent definition with model, tools, and body preview
+- **Memory** - Inspect every CLAUDE.md (global + repo) with topics, line counts, and full body
+- **Hooks** - Audit every configured hook, scoped per repo
 
 ### Health & Hygiene
-- **Hygiene** - Project hygiene checks: stale branches, large files, missing configs
-- **Lint** - Aggregate lint status across every project
-- **Deps** - Outdated dependency overview across all repos
-- **Env** - Spot-check `.env` exposure, missing keys, and leaked secrets
-- **Ports** - See which local ports are bound and by which process
+- **Hygiene** - Actionable issues with one-click fixes: stale branches, missing CLAUDE.md, ungitignored `.env`, missing `.gitignore`, uncommitted changes
+- **Lint** - Aggregate eslint, prettier, ruff, stylelint, and editorconfig configs across every repo
+- **Deps** - Manifest summaries across npm, cargo, pip, poetry, go, and bundler
+- **Env** - `.env` files surfaced with key inventory, gitignore status, and `.env.example` presence
+- **Ports** - See which local ports are bound, by which process, and from which working directory
 
 ### Backups
 - **Snapshots** - Local snapshots of project state for quick rollback
@@ -76,8 +76,8 @@ All versions include in-app release notes and update notifications to keep you i
 ### Privacy & Security
 - **Fully Local** - All data stays on your machine; no account, no cloud sync
 - **No Telemetry** - LunoPeak does not phone home or collect usage data
-- **Native Performance** - Built on Tauri 2 (Rust) for a small footprint and fast startup
-- **Encrypted Storage** - Sensitive settings stored using OS keychain APIs
+- **Native Performance** - Built on Tauri 2 (Rust) for a small footprint (~150 MB on disk, ~120 MB resident) and fast startup
+- **Outbound Only When You Ask** - Network traffic is limited to provider APIs (Anthropic, OpenAI, Gemini) when you use the Assistant, and the update endpoint when enabled
 
 ## Screenshots
 
