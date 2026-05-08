@@ -104,11 +104,11 @@ All versions include in-app release notes and update notifications to keep you i
 ### Sessions
 ![Sessions](screenshots/sessions.png)
 
-### Repo Pulse
-![Repo Pulse](screenshots/repo-pulse.png)
+### Costs
+![Costs](screenshots/costs.png)
 
-### Assistant
-![Assistant](screenshots/assistant.png)
+### Hygiene
+![Hygiene](screenshots/hygiene.png)
 
 ## System Requirements
 
