@@ -4,7 +4,7 @@
 
 # LunoPeak
 
-![LunoPeak](https://img.shields.io/badge/version-1.3.0-blue.svg)
+![LunoPeak](https://img.shields.io/badge/version-1.4.0-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
 [![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-ff69b4.svg)](https://github.com/sponsors/idevtim)
 [![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-%E2%98%95-ffdd00.svg)](https://buymeacoffee.com/idevtim)
@@ -21,13 +21,14 @@ A local-first desktop dashboard for your AI dev environment. One window for ever
 
 All builds auto-update except Linux RPM (manual).
 
-## What's New in 1.3.0
+## What's New in 1.4.0
 
-- **Cursor is a first-class agent** — Settings toggle, Live view (with workspace cwd, last bubble preview, real Cursor icon), and Setup card with merged MCP servers from `~/.cursor/mcp.json`.
-- **Codex stays on.** First-run migration force-enables every agent once, so old `codex: false` settings no longer carry forward. Your later toggles stay sticky.
-- **Claude OAuth auto-refresh.** Tokens refresh transparently across launches — no more dropped accounts after idle periods.
-- **Per-user Windows installer.** No elevation prompts, no orphan `Program Files` entries on uninstall.
-- **macOS Reopen handling.** Dock/Launchpad/Finder reliably bring the window back from Accessory mode.
+- **Ollama as a first-class assistant provider.** New tile in Settings → Assistant, calls go straight from the app to your local daemon (default `http://localhost:11434`), no API key, no account.
+- **Live model discovery.** The model picker pulls installed models from `/api/tags` whenever it opens, with family and parameter size shown inline.
+- **Tool-calling works on local models.** The assistant's tools (hygiene, repos, costs, sessions, tool stats) run end-to-end on tool-capable models like Llama 3.2, Qwen 2.5 Coder, and Mistral.
+- **Auto-default on first install.** A running Ollama daemon is detected and adopted as the default provider before you open Settings, so the chat just works.
+- **Provider + model dropdown in the header.** Combined picker lists every configured provider with its models — switch from Claude Sonnet to a local Qwen and back without leaving the chat.
+- **Dashboards refresh on their own.** Cost today, session stats, summary, sessions, tool stats, and repo activity now poll on a 60-second cadence and revalidate stale data on view switches.
 
 ## Features
 
