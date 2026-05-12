@@ -4,7 +4,7 @@
 
 # LunoPeak
 
-![LunoPeak](https://img.shields.io/badge/version-1.4.0-blue.svg)
+![LunoPeak](https://img.shields.io/badge/version-1.5.0-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
 [![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-ff69b4.svg)](https://github.com/sponsors/idevtim)
 [![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-%E2%98%95-ffdd00.svg)](https://buymeacoffee.com/idevtim)
@@ -21,14 +21,16 @@ A local-first desktop dashboard for your AI dev environment. One window for ever
 
 All builds auto-update except Linux RPM (manual).
 
-## What's New in 1.4.0
+## What's New in 1.5.0
 
-- **Ollama as a first-class assistant provider.** New tile in Settings → Assistant, calls go straight from the app to your local daemon (default `http://localhost:11434`), no API key, no account.
-- **Live model discovery.** The model picker pulls installed models from `/api/tags` whenever it opens, with family and parameter size shown inline.
-- **Tool-calling works on local models.** The assistant's tools (hygiene, repos, costs, sessions, tool stats) run end-to-end on tool-capable models like Llama 3.2, Qwen 2.5 Coder, and Mistral.
-- **Auto-default on first install.** A running Ollama daemon is detected and adopted as the default provider before you open Settings, so the chat just works.
-- **Provider + model dropdown in the header.** Combined picker lists every configured provider with its models — switch from Claude Sonnet to a local Qwen and back without leaving the chat.
-- **Dashboards refresh on their own.** Cost today, session stats, summary, sessions, tool stats, and repo activity now poll on a 60-second cadence and revalidate stale data on view switches.
+- **Redesigned tray popover.** Frameless, themed panel anchored under the tray icon with frosted-glass chrome that matches the rest of the app. Auto-hides on blur, honors *Reduce motion*, and theme changes from Settings apply live.
+- **Insight strip.** Surfaces the single most-pressing usage window across your providers, color-coded green/amber/rose with the reset time underneath. Dismiss to surface the next one.
+- **Tabs + per-provider detail.** Overview tab plus one per enabled provider. Overview is a clickable grid; per-provider view shows Session (5h) and Weekly bars in the provider's color. Cursor shows "Active context" instead.
+- **Cost rollup + sparkline.** Today and last-30-day spend at the bottom of the panel, with a 7-day spend sparkline.
+- **Adapts to your installed agents.** Claude Code, Codex, and Cursor are detected at launch, and copy, empty states, and buttons tune to whichever combination you actually have. The Repo Detail "Open in agent" button opens whichever agent you actually use.
+- **First-launch notification onboarding.** Asks for OS notification permission once and sends a welcome banner so you can confirm it works. Denials are remembered.
+- **Smarter Usage Limits card.** Provider rate-limit and auth errors surface inline ("Retry in 6m") instead of letting the bar freeze on stale data. The refresh button disables itself until the soonest backoff expires.
+- **Claude usage limits checked far less often.** Extended cache, deduplicated concurrent calls, and skipped checks when nothing's changed locally — should clear up false "Rate-limited" notices for users running Claude Code alongside LunoPeak.
 
 ## Features
 
