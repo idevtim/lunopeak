@@ -4,7 +4,7 @@
 
 # LunoPeak
 
-![LunoPeak](https://img.shields.io/badge/version-1.5.0-blue.svg)
+![LunoPeak](https://img.shields.io/badge/version-1.5.1-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
 [![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-ff69b4.svg)](https://github.com/sponsors/idevtim)
 [![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-%E2%98%95-ffdd00.svg)](https://buymeacoffee.com/idevtim)
@@ -21,16 +21,14 @@ A local-first desktop dashboard for your AI dev environment. One window for ever
 
 All builds auto-update except Linux RPM (manual).
 
-## What's New in 1.5.0
+## What's New in 1.5.1
 
-- **Redesigned tray popover.** Frameless, themed panel anchored under the tray icon with frosted-glass chrome that matches the rest of the app. Auto-hides on blur, honors *Reduce motion*, and theme changes from Settings apply live.
-- **Insight strip.** Surfaces the single most-pressing usage window across your providers, color-coded green/amber/rose with the reset time underneath. Dismiss to surface the next one.
-- **Tabs + per-provider detail.** Overview tab plus one per enabled provider. Overview is a clickable grid; per-provider view shows Session (5h) and Weekly bars in the provider's color. Cursor shows "Active context" instead.
-- **Cost rollup + sparkline.** Today and last-30-day spend at the bottom of the panel, with a 7-day spend sparkline.
-- **Adapts to your installed agents.** Claude Code, Codex, and Cursor are detected at launch, and copy, empty states, and buttons tune to whichever combination you actually have. The Repo Detail "Open in agent" button opens whichever agent you actually use.
-- **First-launch notification onboarding.** Asks for OS notification permission once and sends a welcome banner so you can confirm it works. Denials are remembered.
-- **Smarter Usage Limits card.** Provider rate-limit and auth errors surface inline ("Retry in 6m") instead of letting the bar freeze on stale data. The refresh button disables itself until the soonest backoff expires.
-- **Claude usage limits checked far less often.** Extended cache, deduplicated concurrent calls, and skipped checks when nothing's changed locally — should clear up false "Rate-limited" notices for users running Claude Code alongside LunoPeak.
+A quick polish pass on the tray popover.
+
+- **Dark mode contrast.** No more washed-out popover when it opens over a bright window behind it.
+- **Brighter secondary text.** Labels and details in the popover are easier to read at a glance.
+- **No phantom Cursor warning.** The "Cursor 5h session" alert no longer fires before you've used any tokens.
+- **Dropped the healthy banner.** The "All windows healthy" line is gone — the bars already tell you that.
 
 ## Features
 
