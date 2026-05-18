@@ -4,7 +4,7 @@
 
 # LunoPeak
 
-![LunoPeak](https://img.shields.io/badge/version-1.5.1-blue.svg)
+![LunoPeak](https://img.shields.io/badge/version-1.5.2-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
 [![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-ff69b4.svg)](https://github.com/sponsors/idevtim)
 [![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-%E2%98%95-ffdd00.svg)](https://buymeacoffee.com/idevtim)
@@ -21,14 +21,13 @@ A local-first desktop dashboard for your AI dev environment. One window for ever
 
 All builds auto-update except Linux RPM (manual).
 
-## What's New in 1.5.1
+## What's New in 1.5.2
 
-A quick polish pass on the tray popover.
+A small UX pass on the Sessions and Costs views — see your full list when you want it, not just the top slice.
 
-- **Dark mode contrast.** No more washed-out popover when it opens over a bright window behind it.
-- **Brighter secondary text.** Labels and details in the popover are easier to read at a glance.
-- **No phantom Cursor warning.** The "Cursor 5h session" alert no longer fires before you've used any tokens.
-- **Dropped the healthy banner.** The "All windows healthy" line is gone — the bars already tell you that.
+- **Sessions → By Project.** Now has a *View all* toggle. Heavy users no longer cap out at 10 projects.
+- **Sessions → Recent Sessions.** Expands the same way, with a count badge in the header.
+- **Costs → By repo.** Picks up the same toggle once you cross 12 repos, plus a matching count badge.
 
 ## Features
 
