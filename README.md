@@ -4,7 +4,7 @@
 
 # LunoPeak
 
-![LunoPeak](https://img.shields.io/badge/version-1.5.2-blue.svg)
+![LunoPeak](https://img.shields.io/badge/version-1.7.2-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
 [![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-ff69b4.svg)](https://github.com/sponsors/idevtim)
 [![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-%E2%98%95-ffdd00.svg)](https://buymeacoffee.com/idevtim)
@@ -21,13 +21,12 @@ A local-first desktop dashboard for your AI dev environment. One window for ever
 
 All builds auto-update except Linux RPM (manual).
 
-## What's New in 1.5.2
+## What's New in 1.7.2
 
-A small UX pass on the Sessions and Costs views — see your full list when you want it, not just the top slice.
+Quality-of-life fixes for the in-app updater: one-click restart, and a banner that actually shows up when you check manually.
 
-- **Sessions → By Project.** Now has a *View all* toggle. Heavy users no longer cap out at 10 projects.
-- **Sessions → Recent Sessions.** Expands the same way, with a count badge in the header.
-- **Costs → By repo.** Picks up the same toggle once you cross 12 repos, plus a matching count badge.
+- **One-click "Restart Now."** When an update finishes installing, the banner — and the About window — now carries a *Restart Now* button that relaunches straight into the new version.
+- **Manual update checks surface the banner immediately.** Hitting *Check for Updates* with only the menu-bar icon running now drives the banner right away — no fully quitting and reopening first.
 
 ## Features
 
