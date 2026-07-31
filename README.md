@@ -4,7 +4,7 @@
 
 # LunoPeak
 
-![LunoPeak](https://img.shields.io/badge/version-1.9.0-blue.svg)
+![LunoPeak](https://img.shields.io/badge/version-1.9.2-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
 [![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-ff69b4.svg)](https://github.com/sponsors/idevtim)
 [![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-%E2%98%95-ffdd00.svg)](https://buymeacoffee.com/idevtim)
@@ -21,11 +21,13 @@ A local-first desktop dashboard for your AI dev environment. One window for ever
 
 All builds auto-update except Linux RPM (manual).
 
-## What's New in 1.9.0
+## What's New in 1.9.2
 
-Support for Anthropic's newest Opus model, so your newest sessions land in the right place.
+A correction to the usage tracking that shipped in 1.9.1 — it was checking your numbers with Anthropic far more often than it needed to.
 
-- **Claude Opus 5 support.** Sessions run on Opus 5 are now recognized and priced correctly, alongside Opus 4.8 — so a mix of both shows up cleanly in your usage and spend rather than being lumped together or billed at the wrong rate. Opus 5 also appears by name in your session breakdowns, and you can pick it for the built-in assistant.
+- **No more rate-limit warnings on your Claude usage.** LunoPeak now checks on a gentler rhythm: your numbers still keep pace while you work, and they leave room for Claude Code's own checks, which draw on the same allowance.
+- **The menu bar and the main window now share a single check.** They were each doing their own, quietly doubling how often LunoPeak asked. One check now serves both, so they always show you the same figure.
+- **A pause stays a pause.** If Anthropic asks LunoPeak to wait, it now waits out the full period instead of occasionally starting up again early — so one pause no longer turns into a run of them.
 
 ## Features
 
