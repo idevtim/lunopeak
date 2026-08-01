@@ -4,7 +4,7 @@
 
 # LunoPeak
 
-![LunoPeak](https://img.shields.io/badge/version-1.9.2-blue.svg)
+![LunoPeak](https://img.shields.io/badge/version-1.10.0-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
 [![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-ff69b4.svg)](https://github.com/sponsors/idevtim)
 [![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-%E2%98%95-ffdd00.svg)](https://buymeacoffee.com/idevtim)
@@ -21,13 +21,16 @@ A local-first desktop dashboard for your AI dev environment. One window for ever
 
 All builds auto-update except Linux RPM (manual).
 
-## What's New in 1.9.2
+## What's New in 1.10.0
 
-A correction to the usage tracking that shipped in 1.9.1 — it was checking your numbers with Anthropic far more often than it needed to.
+OpenAI's GPT-5.6 family — Sol, Terra, and Luna — now shows up properly in your costs, along with a handful of other models LunoPeak had been guessing at.
 
-- **No more rate-limit warnings on your Claude usage.** LunoPeak now checks on a gentler rhythm: your numbers still keep pace while you work, and they leave room for Claude Code's own checks, which draw on the same allowance.
-- **The menu bar and the main window now share a single check.** They were each doing their own, quietly doubling how often LunoPeak asked. One check now serves both, so they always show you the same figure.
-- **A pause stays a pause.** If Anthropic asks LunoPeak to wait, it now waits out the full period instead of occasionally starting up again early — so one pause no longer turns into a run of them.
+- **GPT-5.6 Sol, Terra, and Luna are priced correctly.** Codex sessions on a 5.6 slug were falling back to old GPT-5 rates — if you ran Sol, your spend was reported at roughly a third of the real cost. Those sessions re-price themselves the next time LunoPeak reads them; expect your Codex numbers to jump, and to be right.
+- **The July 30 price cut is respected.** OpenAI dropped Terra 20% and Luna 80% on the 30th. Sessions from before that date still cost what they cost, so your history stays honest instead of being retconned to today's rates.
+- **Several more models stopped being guesses.** GPT-5.4 nano, the Codex-specific models (5.3, 5.2, 5.1 Codex Max), and the Pro tiers all have their own numbers now, rather than defaulting to GPT-5.
+- **The built-in assistant offers the 5.6 models.** Luna, Terra, and Sol are in the OpenAI model picker, with Sol as the new default. GPT-5.5 is still there; the 5.4 entries retire in favor of the newer, cheaper Luna and Terra.
+
+> **Worth knowing:** OpenAI charges a premium on single prompts over 272K tokens. LunoPeak doesn't apply it — Codex only writes one running total per session, not a per-message breakdown, so there's no way to tell a genuinely huge prompt from a long conversation. Charging the premium on the total would inflate almost every long session, so a rare, very large prompt may read slightly under.
 
 ## Features
 
