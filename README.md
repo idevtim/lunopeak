@@ -4,7 +4,7 @@
 
 # LunoPeak
 
-![LunoPeak](https://img.shields.io/badge/version-1.10.0-blue.svg)
+![LunoPeak](https://img.shields.io/badge/version-1.13.0-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
 [![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-ff69b4.svg)](https://github.com/sponsors/idevtim)
 [![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-%E2%98%95-ffdd00.svg)](https://buymeacoffee.com/idevtim)
@@ -21,23 +21,24 @@ A local-first desktop dashboard for your AI dev environment. One window for ever
 
 All builds auto-update except Linux RPM (manual).
 
-## What's New in 1.10.0
+## What's New in 1.13.0
 
-OpenAI's GPT-5.6 family — Sol, Terra, and Luna — now shows up properly in your costs, along with a handful of other models LunoPeak had been guessing at.
+Claude Opus 5.5 gets its own price, your Fable weekly limit shows up next to the others, and the Assistant can now talk to Grok. Until now LunoPeak billed Opus 5.5 as Opus 5, so if you've been running it, your Opus 5.5 spend has been reading higher than what you actually paid.
 
-- **GPT-5.6 Sol, Terra, and Luna are priced correctly.** Codex sessions on a 5.6 slug were falling back to old GPT-5 rates — if you ran Sol, your spend was reported at roughly a third of the real cost. Those sessions re-price themselves the next time LunoPeak reads them; expect your Codex numbers to jump, and to be right.
-- **The July 30 price cut is respected.** OpenAI dropped Terra 20% and Luna 80% on the 30th. Sessions from before that date still cost what they cost, so your history stays honest instead of being retconned to today's rates.
-- **Several more models stopped being guesses.** GPT-5.4 nano, the Codex-specific models (5.3, 5.2, 5.1 Codex Max), and the Pro tiers all have their own numbers now, rather than defaulting to GPT-5.
-- **The built-in assistant offers the 5.6 models.** Luna, Terra, and Sol are in the OpenAI model picker, with Sol as the new default. GPT-5.5 is still there; the 5.4 entries retire in favor of the newer, cheaper Luna and Terra.
+- **Opus 5.5 is priced at its own, lower rate.** $4 per million input tokens and $20 per million output, down from Opus 5's $5 and $25, with cache writes at $5 for the 5-minute cache and $8 for the 1-hour one. LunoPeak had no idea Opus 5.5 was a separate model — it read the name as Opus 5 and charged the old rates, so input, output, and cache writes were all about a quarter too high. Those sessions re-price themselves the next time LunoPeak reads them, so expect your Opus 5.5 numbers to come down.
+- **Its cheaper cache reads are counted too.** Opus 5.5 bills cached tokens at $0.20 per million — 5% of its input rate, where most models charge 10%, and less than half the $0.50 it was being charged here. On a long agentic session, where most of the bill is re-reading a prompt that's already cached, this is the line that moves most. Opus 5.5 now gets the green saving marker in Cost by model, the same one Fable 5.1 has.
+- **Your Fable weekly limit has its own bar.** Claude plans cap Fable separately from the all-models weekly limit, and it often runs out first — so you could read 30% weekly and still be cut off from Fable. Rate limits on the dashboard and the menu bar panel now show a "Weekly · Fable" bar, with its percentage and reset time straight from Anthropic. It counts toward usage alerts, and the menu bar's warning banner calls it out by name when it's the closest limit to running out. To watch it from the tray, set Settings → System Tray → Headline window → Fable.
+- **xAI is the Assistant's fifth provider.** Add an xAI API key in Settings → Assistant and chat with Grok 4.7, Grok 4.6, or Grok 4.5 — 4.7 is the default. Tool use works the same way it does with the other providers, so Grok can pull your costs, sessions, and repos just like Claude or GPT can. The key is stored in your system keychain, and requests go straight from your machine to xAI.
+- **Opus 5.5 is in the assistant's model picker,** right after Opus 5. Sessions labels it "Opus 5.5" now as well, where it used to show up as plain "Opus 5".
 
-> **Worth knowing:** OpenAI charges a premium on single prompts over 272K tokens. LunoPeak doesn't apply it — Codex only writes one running total per session, not a per-message breakdown, so there's no way to tell a genuinely huge prompt from a long conversation. Charging the premium on the total would inflate almost every long session, so a rare, very large prompt may read slightly under.
+> **Worth knowing:** Fast mode isn't priced separately. Opus 5.5 in fast mode bills at $8 / $40 per million, twice the standard rate, but the session logs LunoPeak reads don't say which speed a turn ran at — so every turn is charged the standard rate, and fast-mode turns will read about half what they really cost. Opus 5 in fast mode has always worked the same way. Grok is a chat provider only for now: LunoPeak doesn't track Grok spend in Costs, because none of the tools it reads usage from record Grok token counts.
 
 ## Features
 
 ### Overview
 - **Dashboard** — every active repo, session, and agent at a glance
-- **Assistant** — built-in chat with full awareness of your environment
-- **Tray** — provider brand marks, live usage windows, reset countdown, headline-window toggle
+- **Assistant** — built-in chat with full awareness of your environment, across Anthropic, OpenAI, Gemini, xAI, and local Ollama models
+- **Tray** — provider brand marks, live usage windows (including Claude's Fable-scoped weekly cap), reset countdown, headline-window toggle
 - **Persistent State** — window size, position, and last-viewed route remembered
 
 ### Activity & Sessions
@@ -76,7 +77,7 @@ OpenAI's GPT-5.6 family — Sol, Terra, and Luna — now shows up properly in yo
 
 ### Privacy & Security
 - **Fully Local** — no account, no cloud sync, no telemetry
-- **OS Keychain** — Anthropic, OpenAI, Gemini keys stored in macOS Keychain / Windows Credential Manager / Linux Secret Service
+- **OS Keychain** — Anthropic, OpenAI, Gemini, and xAI keys stored in macOS Keychain / Windows Credential Manager / Linux Secret Service
 - **Auth Resilience** — Claude OAuth tokens auto-refresh across launches
 - **Hardened Shell-outs** — folder paths passed as argv with per-platform quoting
 - **Native Performance** — Tauri 2 (Rust). ~150 MB on disk, ~120 MB resident
