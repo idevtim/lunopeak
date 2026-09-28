@@ -4,7 +4,7 @@
 
 # LunoPeak
 
-![LunoPeak](https://img.shields.io/badge/version-1.13.0-blue.svg)
+![LunoPeak](https://img.shields.io/badge/version-1.14.0-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
 [![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-ff69b4.svg)](https://github.com/sponsors/idevtim)
 [![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-%E2%98%95-ffdd00.svg)](https://buymeacoffee.com/idevtim)
@@ -21,17 +21,21 @@ A local-first desktop dashboard for your AI dev environment. One window for ever
 
 All builds auto-update except Linux RPM (manual).
 
-## What's New in 1.13.0
+## What's New in 1.14.0
 
-Claude Opus 5.5 gets its own price, your Fable weekly limit shows up next to the others, and the Assistant can now talk to Grok. Until now LunoPeak billed Opus 5.5 as Opus 5, so if you've been running it, your Opus 5.5 spend has been reading higher than what you actually paid.
+Your plan limits tell you how much of the week you've used. This release adds the other number you've been checking by hand: how full each running conversation's context window is. Every Claude, Codex, and Cursor session you have open now shows its context fill in the Live view, the menu bar, and on the dashboard — and you can put it in your terminals themselves.
 
-- **Opus 5.5 is priced at its own, lower rate.** $4 per million input tokens and $20 per million output, down from Opus 5's $5 and $25, with cache writes at $5 for the 5-minute cache and $8 for the 1-hour one. LunoPeak had no idea Opus 5.5 was a separate model — it read the name as Opus 5 and charged the old rates, so input, output, and cache writes were all about a quarter too high. Those sessions re-price themselves the next time LunoPeak reads them, so expect your Opus 5.5 numbers to come down.
-- **Its cheaper cache reads are counted too.** Opus 5.5 bills cached tokens at $0.20 per million — 5% of its input rate, where most models charge 10%, and less than half the $0.50 it was being charged here. On a long agentic session, where most of the bill is re-reading a prompt that's already cached, this is the line that moves most. Opus 5.5 now gets the green saving marker in Cost by model, the same one Fable 5.1 has.
-- **Your Fable weekly limit has its own bar.** Claude plans cap Fable separately from the all-models weekly limit, and it often runs out first — so you could read 30% weekly and still be cut off from Fable. Rate limits on the dashboard and the menu bar panel now show a "Weekly · Fable" bar, with its percentage and reset time straight from Anthropic. It counts toward usage alerts, and the menu bar's warning banner calls it out by name when it's the closest limit to running out. To watch it from the tray, set Settings → System Tray → Headline window → Fable.
-- **xAI is the Assistant's fifth provider.** Add an xAI API key in Settings → Assistant and chat with Grok 4.7, Grok 4.6, or Grok 4.5 — 4.7 is the default. Tool use works the same way it does with the other providers, so Grok can pull your costs, sessions, and repos just like Claude or GPT can. The key is stored in your system keychain, and requests go straight from your machine to xAI.
-- **Opus 5.5 is in the assistant's model picker,** right after Opus 5. Sessions labels it "Opus 5.5" now as well, where it used to show up as plain "Opus 5".
+- **Each running session shows how full its context is.** For Claude Code, LunoPeak finds each running `claude` process by its PID, finds the conversation it belongs to, and reads how big the most recent prompt was — the same figure Claude Code uses when it warns you it's about to compact. You see it as a percentage of the model's window, so "14% · 141K / 1M" tells you a session is still fresh, and you know which of your five terminals is about to compact before it happens. Codex sessions get the same treatment from the token counts it records after every turn. Cursor only saves a percentage per chat, so Cursor rows show the percentage without token counts.
+- **The Live view shows context for every process.** Each process card has a Context row with a bar, a percentage, tokens used out of the window, and the model, and a new Peak context card at the top shows the fullest session you have running. The bar turns amber at 70% and red at 85%. Claude processes are also matched to their own conversation exactly now — before, two Claude sessions in the same folder were told apart by folder alone, and a card could show the other session's last action.
+- **The menu bar panel has a "Running now" list.** Under the provider bars, a compact row per live session shows its name, folder, a thin bar, and its context percentage, with a pulsing dot on the Claude sessions working right now. Open a provider tab and the list narrows to that provider's sessions, below its 5-hour, weekly, and Fable bars. These rows are deliberately smaller than the plan bars: those are limits on your whole account, these are one conversation each.
+- **The dashboard has a "Running now · context" section,** just below Rate limits, listing each live session's context fill, model, and token count, plus how many sessions are running and how many are busy. Drag it wherever you like with Edit layout.
+- **Context and limits in your Claude Code terminal.** Turn it on in Settings → Terminal and every Claude Code session gets a line under the prompt: a bar for this session's context fill, your 5-hour and weekly limits, your Fable weekly limit, and what the session and your day have cost so far. It updates on every message and never goes to the network, so it doesn't slow Claude Code down. If you already use a status line — ccstatusline, ccusage, your own script — LunoPeak keeps it and adds its line underneath, and turning the toggle off puts your old one back.
+- **You choose what the terminal line shows.** Settings → Terminal → Customize the line lists every piece: context, 5-hour, weekly, model limits like Fable, session cost, today's cost, and — off to start with — the model, the folder, and the git branch. Switch each on or off, move them up or down, turn off the context bar, the token count, or colors, choose when a limit shows its reset time, pick the separator, and set your own yellow and red thresholds. A preview shows the exact line as you go, and open sessions pick up changes without a restart.
+- **The context % gets exact once the status line is on.** Claude Code tells the status line the real size of each session's context window, and LunoPeak keeps that and uses it everywhere instead of working the window out from the model name.
+- **Codex terminals too, as far as Codex allows.** Codex can't run another program in its status line, so LunoPeak switches on Codex's built-in items instead: model, context used, 5-hour and weekly limits, and git branch. If you'd already picked your own items, turning this off puts them back.
+- **The menu bar stops showing out-of-date usage after an update.** The menu bar helper can keep running for weeks after the app updates, and it could keep showing usage saved before the update — missing the Fable weekly bar. It now notices that and fetches fresh numbers.
 
-> **Worth knowing:** Fast mode isn't priced separately. Opus 5.5 in fast mode bills at $8 / $40 per million, twice the standard rate, but the session logs LunoPeak reads don't say which speed a turn ran at — so every turn is charged the standard rate, and fast-mode turns will read about half what they really cost. Opus 5 in fast mode has always worked the same way. Grok is a chat provider only for now: LunoPeak doesn't track Grok spend in Costs, because none of the tools it reads usage from record Grok token counts.
+> **Worth knowing:** Claude's transcripts don't record the size of the context window. With the Claude Code status line on, LunoPeak gets the real size from Claude Code; without it, it works the size out from the model — Fable, Mythos, Opus 5 and 5.5, Sonnet 5, and Opus 4.6–4.8 count as 1M, older models as 200K, and any session already past 200K counts as 1M whatever the model. Run a 1M model on a 200K window and its percentage reads lower than it really is; the token count next to it is always exact. Codex doesn't record which process is working on which conversation, so with two Codex sessions in one folder, which percentage goes with which process is a best guess. The status line points at wherever LunoPeak is installed — move the app and Settings → Terminal offers a Repair button — and Claude Code only runs status lines in folders you've trusted, the same rule it uses for hooks.
 
 ## Features
 
@@ -39,10 +43,11 @@ Claude Opus 5.5 gets its own price, your Fable weekly limit shows up next to the
 - **Dashboard** — every active repo, session, and agent at a glance
 - **Assistant** — built-in chat with full awareness of your environment, across Anthropic, OpenAI, Gemini, xAI, and local Ollama models
 - **Tray** — provider brand marks, live usage windows (including Claude's Fable-scoped weekly cap), reset countdown, headline-window toggle
+- **Terminal** — context fill, plan limits, and cost in your Claude Code status line; built-in items for Codex
 - **Persistent State** — window size, position, and last-viewed route remembered
 
 ### Activity & Sessions
-- **Live View** — Claude Code, Codex, and Cursor sessions in real time, each process matched to its own transcript
+- **Live View** — Claude Code, Codex, and Cursor sessions in real time, each process matched to its own transcript, with per-session context fill
 - **Sessions History** — every past session with timing, repo, and outcomes
 - **Session Replay** — step through any session turn-by-turn
 - **Transcripts** — full-text searchable archive across every project
