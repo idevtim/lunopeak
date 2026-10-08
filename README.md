@@ -4,7 +4,7 @@
 
 # LunoPeak
 
-![LunoPeak](https://img.shields.io/badge/version-1.14.0-blue.svg)
+![LunoPeak](https://img.shields.io/badge/version-1.15.0-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
 [![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-ff69b4.svg)](https://github.com/sponsors/idevtim)
 [![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-%E2%98%95-ffdd00.svg)](https://buymeacoffee.com/idevtim)
@@ -21,21 +21,25 @@ A local-first desktop dashboard for your AI dev environment. One window for ever
 
 All builds auto-update except Linux RPM (manual).
 
-## What's New in 1.14.0
+## What's New in 1.15.0
 
-Your plan limits tell you how much of the week you've used. This release adds the other number you've been checking by hand: how full each running conversation's context window is. Every Claude, Codex, and Cursor session you have open now shows its context fill in the Live view, the menu bar, and on the dashboard — and you can put it in your terminals themselves.
+Anthropic released Claude Haiku 5.5, so LunoPeak now prices it, labels it, and lets you pick it in the Assistant. While adding it, we checked every Claude model's price against Anthropic's current pricing page — four models were being billed wrong. If you use Sonnet 5, your Costs page will drop.
 
-- **Each running session shows how full its context is.** For Claude Code, LunoPeak finds each running `claude` process by its PID, finds the conversation it belongs to, and reads how big the most recent prompt was — the same figure Claude Code uses when it warns you it's about to compact. You see it as a percentage of the model's window, so "14% · 141K / 1M" tells you a session is still fresh, and you know which of your five terminals is about to compact before it happens. Codex sessions get the same treatment from the token counts it records after every turn. Cursor only saves a percentage per chat, so Cursor rows show the percentage without token counts.
-- **The Live view shows context for every process.** Each process card has a Context row with a bar, a percentage, tokens used out of the window, and the model, and a new Peak context card at the top shows the fullest session you have running. The bar turns amber at 70% and red at 85%. Claude processes are also matched to their own conversation exactly now — before, two Claude sessions in the same folder were told apart by folder alone, and a card could show the other session's last action.
-- **The menu bar panel has a "Running now" list.** Under the provider bars, a compact row per live session shows its name, folder, a thin bar, and its context percentage, with a pulsing dot on the Claude sessions working right now. Open a provider tab and the list narrows to that provider's sessions, below its 5-hour, weekly, and Fable bars. These rows are deliberately smaller than the plan bars: those are limits on your whole account, these are one conversation each.
-- **The dashboard has a "Running now · context" section,** just below Rate limits, listing each live session's context fill, model, and token count, plus how many sessions are running and how many are busy. Drag it wherever you like with Edit layout.
-- **Context and limits in your Claude Code terminal.** Turn it on in Settings → Terminal and every Claude Code session gets a line under the prompt: a bar for this session's context fill, your 5-hour and weekly limits, your Fable weekly limit, and what the session and your day have cost so far. It updates on every message and never goes to the network, so it doesn't slow Claude Code down. If you already use a status line — ccstatusline, ccusage, your own script — LunoPeak keeps it and adds its line underneath, and turning the toggle off puts your old one back.
-- **You choose what the terminal line shows.** Settings → Terminal → Customize the line lists every piece: context, 5-hour, weekly, model limits like Fable, session cost, today's cost, and — off to start with — the model, the folder, and the git branch. Switch each on or off, move them up or down, turn off the context bar, the token count, or colors, choose when a limit shows its reset time, pick the separator, and set your own yellow and red thresholds. A preview shows the exact line as you go, and open sessions pick up changes without a restart.
-- **The context % gets exact once the status line is on.** Claude Code tells the status line the real size of each session's context window, and LunoPeak keeps that and uses it everywhere instead of working the window out from the model name.
-- **Codex terminals too, as far as Codex allows.** Codex can't run another program in its status line, so LunoPeak switches on Codex's built-in items instead: model, context used, 5-hour and weekly limits, and git branch. If you'd already picked your own items, turning this off puts them back.
-- **The menu bar stops showing out-of-date usage after an update.** The menu bar helper can keep running for weeks after the app updates, and it could keep showing usage saved before the update — missing the Fable weekly bar. It now notices that and fetches fresh numbers.
+- **Haiku 5.5 is supported.** Its cost is worked out correctly in Costs, Sessions, the menu bar, and the terminal status line, and Sessions labels it "Haiku 5.5". It's the first Claude model whose price depends on how long the prompt is: up to 100K tokens it's $0.10 per million input and $0.50 per million output, and a prompt over 100K costs five times that for the whole turn — $0.50 and $2.50. As with Claude Code itself, "the prompt" means everything sent: new input, cache reads, and cache writes. Its context meter counts against a 1M window.
+- **Sonnet 5.5 is supported too.** Sessions labels it "Sonnet 5.5", and both new models are in the Assistant's model picker. The old "Haiku" entry is renamed "Haiku 4.5" so you can tell the two apart.
 
-> **Worth knowing:** Claude's transcripts don't record the size of the context window. With the Claude Code status line on, LunoPeak gets the real size from Claude Code; without it, it works the size out from the model — Fable, Mythos, Opus 5 and 5.5, Sonnet 5, and Opus 4.6–4.8 count as 1M, older models as 200K, and any session already past 200K counts as 1M whatever the model. Run a 1M model on a 200K window and its percentage reads lower than it really is; the token count next to it is always exact. Codex doesn't record which process is working on which conversation, so with two Codex sessions in one folder, which percentage goes with which process is a best guess. The status line points at wherever LunoPeak is installed — move the app and Settings → Terminal offers a Repair button — and Claude Code only runs status lines in folders you've trusted, the same rule it uses for hooks.
+### Price fixes
+
+- **Sonnet 5 stays at $2 / $10.** Anthropic launched Sonnet 5 with "introductory" pricing due to rise to $3 / $15 on September 1, then cancelled the increase. LunoPeak still applied it, so every Sonnet 5 turn since September 1 showed 50% more than you actually paid. Those turns now show the right amount, as do turns where LunoPeak couldn't tell the date.
+- **Mythos 5.1 gets Fable 5.1's cheap cache reads.** When Mythos 5.1 came out, Anthropic hadn't said whether it shared Fable 5.1's $0.25-per-million cache-read rate, so LunoPeak charged the full $1.00 rather than show a bill lower than the real one. Anthropic has now confirmed $0.25, so Mythos cache reads cost a quarter of what was showing. Mythos 5.1 also appears in the Costs page's "saved" note now, next to Fable 5.1 and Opus 5.5.
+- **No more long-prompt surcharge on Opus 4.6, 4.7, and 4.8.** Anthropic now charges the normal rate across the whole 1M context window for these models, and LunoPeak was still doubling the price of any prompt over 200K tokens. Opus sessions with long prompts now cost what they actually did.
+- **Sonnet 4.6 context fills against 1M.** Its context meter assumed a 200K window until the session passed 200K; it now uses 1M from the start, like the other current models. With the Claude Code status line on, this was already exact.
+
+### Fixes
+
+- **The window opens where you left it.** LunoPeak used to re-centre its window on every open, and sometimes the centring went wrong and the window landed toward the bottom-right of the screen. It now reopens at the size and position it had when you closed it, on macOS, Windows, and Linux. If that spot is no longer on screen — you unplugged a monitor, say — it opens centred on your main display instead.
+
+> **Worth knowing:** Anthropic's pricing page disagrees with itself about Sonnet 5.5 cache reads — the price table and models overview say $0.20 per million, the prompt-caching section says $0.10. Until they agree, LunoPeak uses $0.20, so if the real rate turns out to be $0.10 your Sonnet 5.5 cache reads will look a little more expensive than they were, never cheaper. Costs are worked out again from your session files each time LunoPeak starts, so once you update, the fixed prices apply to all your past sessions as well as new ones. These are list prices: LunoPeak doesn't account for fast mode, the Batch API discount, US-only inference, or a negotiated enterprise rate — fast mode costs more than LunoPeak shows, the others cost less or the same.
 
 ## Features
 
@@ -108,7 +112,7 @@ Your plan limits tell you how much of the week you've used. This release adds th
 |----------|----------------|
 | macOS | 10.15+ (Apple Silicon & Intel) |
 | Windows | 10+ (x64 & ARM64) |
-| Linux | Ubuntu 20.04+ / RHEL 8+ (x86_64 & aarch64) |
+| Linux | Ubuntu 20.04+ / RHEL 8+ (x86_64) |
 
 ## Pricing
 
