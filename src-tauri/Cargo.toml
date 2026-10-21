@@ -1,0 +1,117 @@
+[package]
+name = "lunopeak"
+version = "2.0.0"
+description = "Your AI dev environment, at a glance."
+authors = ["iDEVTim"]
+license = "MIT"
+repository = "https://github.com/idevtim/lunopeak"
+homepage = "https://lunopeak.com"
+edition = "2021"
+rust-version = "1.90"
+
+[lib]
+name = "lunopeak_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "LunoPeak"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-os = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-window-state = "2"
+window-vibrancy = "0.6"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+thiserror = "2"
+
+# Scanning + watching
+walkdir = "2"
+ignore = "0.4"
+notify = "7"
+sysinfo = "0.32"
+rayon = "1"
+
+# Storage
+# keyring 3.x ships with zero backends enabled by default — without these
+# features Entry::new() falls back to a mock keystore and every write/read
+# fails on a real signed build. apple-native = Keychain, windows-native =
+# Credential Manager, sync-secret-service = Linux Secret Service via DBus.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+dirs = "5"
+# Edits ~/.codex/config.toml in place (status line opt-in) without
+# discarding the user's comments, ordering or formatting.
+toml_edit = "0.25"
+
+# Utility
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+
+# Cursor stores chat history in a SQLite database (state.vscdb). `bundled`
+# links libsqlite3 statically so we don't depend on the host's version.
+# Pinned to 0.31 to match the version `rookie` bundles — cargo only allows
+# one crate in the graph to claim `links = "sqlite3"`, so both must agree.
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Browser-cookie extraction for the Cursor web API path (cursor.com doesn't
+# publish a CLI/API key flow; we ride the user's existing browser session).
+# Reads from Chrome / Edge / Brave / Arc / Firefox / Safari / etc., decrypting
+# Chromium cookies via the OS keychain — this triggers a one-time Keychain
+# prompt on macOS the first time the user enables the Cursor web source.
+rookie = "0.5"
+
+# System dark/light mode detection. On Windows the tray (taskbar) theme is
+# a separate registry value from the app theme, so we can't piggyback on
+# Tauri's webview theme — dark-light reads SystemUsesLightTheme directly.
+dark-light = "2"
+
+# Codex 0.163+ zstd-compresses its rollouts (`rollout-*.jsonl.zst`). A pure-
+# Rust decoder keeps the Windows cross-compile and the Linux container build
+# free of a C toolchain for libzstd.
+ruzstd = "0.8"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# The tray popover is a system NSPopover hosting the panel's webview (see
+# src/tray_popover.rs). Same versions tray-icon / wry already pull in.
+objc2 = "0.6"
+objc2-app-kit = "0.3"
+objc2-foundation = "0.3"
+block2 = "0.6"
+# The window process catches SIGTERM (sent by the menu-bar agent's "Quit") and
+# exits gracefully — running Tauri teardown so window geometry is saved —
+# instead of being hard-killed. signal-hook delivers the signal on a normal
+# thread where calling AppHandle::exit is safe.
+signal-hook = "0.3"
+
+# Linux-only: we call glib::set_prgname() before GTK initializes so the
+# Wayland app-id (which GTK3 derives from g_get_prgname(), NOT the GApplication
+# id) is a deterministic value that matches the .desktop StartupWMClass — the
+# only way GNOME/Wayland resolves the taskbar/dock icon. Version tracks the
+# glib already pulled in transitively by gtk/gdk (0.18).
+[target.'cfg(target_os = "linux")'.dependencies]
+glib = "0.18"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

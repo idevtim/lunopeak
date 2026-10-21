@@ -1,0 +1,127 @@
+# syntax=docker/dockerfile:1
+# check=skip=FromPlatformFlagConstDisallowed
+#
+# The FromPlatformFlagConstDisallowed lint fires on the hardcoded --platform
+# below. It's suppressed on purpose: the usual advice is to let BuildKit infer
+# the platform, but this image exists specifically to produce amd64 artifacts
+# on an arm64 host, so inferring would defeat the point.
+#
+# Linux build environment for LunoPeak.
+#
+# Pinned to linux/amd64 because that is the only Linux architecture we ship —
+# every Linux artifact on idevtim/lunopeak through v1.9.2 is amd64/x86_64.
+# On an Apple Silicon host this therefore runs emulated. Turn on
+# Docker Desktop → Settings → General → "Use Rosetta for x86_64/amd64
+# emulation"; under plain QEMU the Rust release build (lto = true,
+# codegen-units = 1) takes several times longer.
+#
+# Base is 22.04, NOT 24.04, and that is deliberate. A binary links against the
+# glibc of the machine that built it and refuses to start on anything older.
+# The v1.9.2 binary we shipped requires GLIBC_2.39, i.e. it was built on 24.04,
+# so it silently excluded every user on Ubuntu 22.04, Debian 12 or Mint 21.
+# 22.04 gives glibc 2.35 and still carries webkit2gtk-4.1, so building here
+# costs nothing and runs on strictly more distros.
+FROM --platform=linux/amd64 ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# AppImage tooling (linuxdeploy, appimagetool) ships as AppImages, which
+# normally need FUSE to self-mount — unavailable in an unprivileged container.
+# This tells the AppImage runtime to unpack to a temp dir and exec from there
+# instead, which is what lets us avoid running with --privileged.
+ENV APPIMAGE_EXTRACT_AND_RUN=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      # Tauri 2 webview + GTK stack
+      libwebkit2gtk-4.1-dev \
+      libsoup-3.0-dev \
+      libssl-dev \
+      libgtk-3-dev \
+      libayatana-appindicator3-dev \
+      librsvg2-dev \
+      # AppImage bundling
+      libfuse2 \
+      patchelf \
+      desktop-file-utils \
+      squashfs-tools \
+      zsync \
+      file \
+      # .rpm bundling
+      rpm \
+      # toolchain + release plumbing
+      build-essential \
+      pkg-config \
+      curl \
+      wget \
+      git \
+      jq \
+      ca-certificates \
+      gnupg \
+      xdg-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node 22 LTS. The host runs 24, but 22 is what the Vite 8 / Tauri CLI stack
+# targets and it keeps the container off a non-LTS line.
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# gh CLI — build-linux.sh uses it for the release upload and fails its
+# pre-flight without it.
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# Rust. `--profile minimal` skips docs/clippy we never invoke here.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --profile minimal --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# ─── AppImage marker workaround ─────────────────────────────────────────────
+# A type-2 AppImage stamps "AI\x02" into the ELF header padding at offset 8.
+# On an arm64 host, x86_64 binaries only run because binfmt_misc matches the
+# ELF header and hands off to the emulator — and that registration requires
+# bytes 8..15 to be zero. The AppImage marker breaks the match, the kernel
+# tries to exec x86-64 natively, and you get a bare "cannot execute binary
+# file: Exec format error".
+#
+# Zeroing the three marker bytes restores the match. Nothing at runtime needs
+# them: they exist so *other tools* can recognise a file as an AppImage, not
+# for the AppImage to run. We only ever do this to tools we execute during the
+# build — the shipped artifact is repacked by appimagetool afterwards and
+# keeps its marker intact.
+COPY appimage-unmagic /usr/local/bin/appimage-unmagic
+RUN chmod +x /usr/local/bin/appimage-unmagic
+
+# Pre-seed the linuxdeploy toolchain, patched, so the very first build works.
+# Tauri would otherwise download these mid-build into ~/.cache/tauri and hit
+# the error above. Filenames match what tauri-bundler 2.x looks for; if a
+# future Tauri renames them it will just re-download, and the entrypoint's
+# patch pass in scripts/docker-build-linux.sh catches those on the next run.
+RUN mkdir -p /opt/tauri-cache && cd /opt/tauri-cache \
+    && curl -fsSL --retry 3 -o AppRun-x86_64 \
+       https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-x86_64 \
+    && curl -fsSL --retry 3 -o linuxdeploy-x86_64.AppImage \
+       https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-x86_64.AppImage \
+    && curl -fsSL --retry 3 -o linuxdeploy-plugin-appimage.AppImage \
+       https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage \
+    && curl -fsSL --retry 3 -o linuxdeploy-plugin-gtk.sh \
+       https://raw.githubusercontent.com/tauri-apps/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh \
+    && curl -fsSL --retry 3 -o linuxdeploy-plugin-gstreamer.sh \
+       https://raw.githubusercontent.com/tauri-apps/linuxdeploy-plugin-gstreamer/master/linuxdeploy-plugin-gstreamer.sh \
+    && chmod +x /opt/tauri-cache/* \
+    && appimage-unmagic /opt/tauri-cache/*.AppImage
+
+# The repo is bind-mounted from the host, so its .git is owned by a uid that
+# doesn't exist in here. Without this, every git call in build-linux.sh aborts
+# with "detected dubious ownership".
+RUN git config --global --add safe.directory /app
+
+WORKDIR /app
+
+CMD ["bash"]

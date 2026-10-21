@@ -1,0 +1,600 @@
+@import "tailwindcss";
+
+/* Tailwind v4: route the `dark:` variant through our [data-theme] attribute
+   instead of `prefers-color-scheme`. The useTheme hook resolves "system"
+   to a concrete light/dark and writes the attribute on <html>. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme {
+  /* Brand accents pulled from the app icon: the owl's deep blue night
+     sky and the warm amber glow on its eyes / beak. Use these when you
+     need a raw CSS color (gradients, shadows, SVG fills); for utility
+     classes, prefer Tailwind's blue-* / amber-* shades directly. */
+  --color-accent: #3b82f6;
+  --color-accent-strong: #2563eb;
+  --color-accent-warm: #f59e0b;
+
+  /* Default font stack — system-first, picks SF Pro on macOS, Segoe UI Variable on
+     Windows 11, Inter as a controlled fallback elsewhere. Overridden per platform
+     via the [data-platform] selectors below. */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Segoe UI Variable Text", "Segoe UI",
+    Inter, Roboto, Cantarell, Ubuntu, system-ui, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", "Cascadia Mono",
+    "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --animate-shimmer: shimmer 1.5s infinite;
+  --animate-toast-in: toast-in 200ms ease-out;
+  /* Slower, softer alternatives to Tailwind's default animate-pulse / animate-ping —
+     reads as "alive" in chrome without becoming distracting. */
+  --animate-pulse-soft: pulse-soft 2.4s ease-in-out infinite;
+  --animate-ping-slow: ping-slow 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+  --animate-breathe: breathe 3s ease-in-out infinite;
+  --animate-radar: radar 3.5s linear infinite;
+  /* Chart entrance animations. Apply with `both` so the start frame is held
+     during the per-bar `animation-delay` stagger — otherwise the bar would
+     flash at full size before the delay elapses. */
+  --animate-chart-bar-grow: chart-bar-grow 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-chart-bar-grow-x: chart-bar-grow-x 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-spark-draw: spark-draw 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-spark-fade: spark-fade 600ms ease-out 250ms both;
+  --animate-heat-cell: heat-cell 420ms ease-out both;
+  --animate-donut-segment: donut-segment 800ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-lp-pulse: lp-pulse 1.4s ease-in-out infinite;
+  --animate-lp-pop-in: lp-pop-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-lp-fade-in: lp-fade-in 150ms ease-out both;
+
+  @keyframes lp-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+  }
+
+  @keyframes lp-pop-in {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to { opacity: 1; transform: none; }
+  }
+
+  @keyframes lp-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes shimmer {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes pulse-soft {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.55;
+    }
+  }
+
+  @keyframes ping-slow {
+    0% {
+      transform: scale(1);
+      opacity: 0.55;
+    }
+    80%,
+    100% {
+      transform: scale(2.4);
+      opacity: 0;
+    }
+  }
+
+  @keyframes breathe {
+    0%,
+    100% {
+      transform: scale(1);
+      opacity: 0.85;
+    }
+    50% {
+      transform: scale(1.08);
+      opacity: 1;
+    }
+  }
+
+  @keyframes radar {
+    0% {
+      transform: rotate(0deg);
+    }
+    100% {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes chart-bar-grow {
+    from {
+      transform: scaleY(0);
+    }
+    to {
+      transform: scaleY(1);
+    }
+  }
+
+  @keyframes chart-bar-grow-x {
+    from {
+      transform: scaleX(0);
+    }
+    to {
+      transform: scaleX(1);
+    }
+  }
+
+  @keyframes spark-draw {
+    from {
+      stroke-dashoffset: 1;
+    }
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+
+  @keyframes spark-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes heat-cell {
+    from {
+      opacity: 0;
+      transform: scale(0.6);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  /* Donut segment draw-on. Each segment carries its own --seg-len and
+     --seg-c custom properties so the shared keyframe expands from a
+     zero-length dash to the segment's final dash pair. */
+  @keyframes donut-segment {
+    from {
+      stroke-dasharray: 0 var(--seg-c);
+    }
+    to {
+      stroke-dasharray: var(--seg-len) calc(var(--seg-c) - var(--seg-len));
+    }
+  }
+}
+
+/* ── Theme tokens ──────────────────────────────────────────────────────
+   Surface and foreground colors that flip with [data-theme]. Anything
+   that reads from raw CSS variables (gradients, the Linux body backdrop,
+   the document foreground) goes through these instead of being hard-coded
+   to a dark-only value. */
+:root,
+[data-theme="dark"] {
+  --color-bg: #09090f;
+  --color-bg-elev-1: #121319;
+  --color-bg-elev-2: #1a1b23;
+  --color-fg: oklch(0.985 0 0); /* zinc-50 */
+}
+
+[data-theme="light"] {
+  --color-bg: #f6f6f8;
+  --color-bg-elev-1: #ffffff;
+  --color-bg-elev-2: #ececf0;
+  --color-fg: oklch(0.21 0.006 285.885); /* zinc-900 */
+}
+
+/* Suppress every CSS transition during a theme swap so `transition-colors`
+   doesn't animate the swap and make it look laggy. The useTheme hook sets
+   this attribute, lets the new colors paint, then removes it on the next
+   frame — outside of theme swaps the attribute is absent and normal
+   hover/focus transitions are unaffected. */
+[data-theme-switching="true"],
+[data-theme-switching="true"] *,
+[data-theme-switching="true"] *::before,
+[data-theme-switching="true"] *::after {
+  transition-property: none !important;
+  transition-duration: 0s !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse-soft,
+  .animate-ping-slow,
+  .animate-breathe,
+  .animate-radar,
+  .animate-chart-bar-grow,
+  .animate-chart-bar-grow-x,
+  .animate-spark-draw,
+  .animate-spark-fade,
+  .animate-heat-cell,
+  .animate-donut-segment,
+  .animate-lp-pulse,
+  .animate-lp-pop-in {
+    animation: none !important;
+  }
+}
+
+/* ── About-page particle effects ──────────────────────────────────────────
+   Lightweight confetti / heart trail used by the AboutCard. Particles are
+   absolutely positioned at a viewport coordinate, then translated by the
+   delta encoded in --lp-dx / --lp-dy and faded out over the animation. */
+.lp-particle {
+  position: fixed;
+  pointer-events: none;
+  user-select: none;
+  line-height: 1;
+  will-change: transform, opacity;
+  transform: translate(-50%, -50%);
+}
+
+.lp-particle-burst {
+  font-size: 18px;
+  animation: lp-confetti-fly 1s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.lp-particle-heart {
+  font-size: 14px;
+  animation: lp-heart-float 900ms ease-out forwards;
+}
+
+@keyframes lp-confetti-fly {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+    opacity: 1;
+  }
+  to {
+    transform: translate(calc(-50% + var(--lp-dx)), calc(-50% + var(--lp-dy)))
+      rotate(var(--lp-rot));
+    opacity: 0;
+  }
+}
+
+@keyframes lp-heart-float {
+  from {
+    transform: translate(-50%, -50%) scale(0.6) rotate(0deg);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  to {
+    transform: translate(calc(-50% + var(--lp-dx)), calc(-50% + var(--lp-dy)))
+      scale(1.1) rotate(var(--lp-rot));
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-particle {
+    display: none;
+  }
+}
+
+/* ── Tray panel entry animation ───────────────────────────────────────────
+   Menu-bar popover opens with no chrome fade — the panel just appears and
+   each section rises into place with a staggered delay driven by
+   `--lp-tray-delay`. Restart on subsequent opens is handled in React by
+   incrementing the `cycle` key on the root, which remounts the wrappers
+   so the keyframes replay from frame 0. Close is instant; nothing to
+   animate out.
+
+   Timing mirrors the chillmac popover: each row fades + rises ~10px under
+   easeOut over 300ms, with the stagger pushed down to individual rows
+   (provider cards, usage bars) rather than only top-level sections. That
+   makes the cascade read more clearly even though the panel only has a
+   handful of items. */
+.lp-tray-item {
+  animation: lp-tray-item-rise 300ms ease-out both;
+  animation-delay: var(--lp-tray-delay, 0ms);
+  will-change: opacity, transform;
+}
+@keyframes lp-tray-item-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* macOS hosts the tray panel in a system NSPopover, which supplies the
+   material, arrow and rounded corners — drop the panel's own surface so the
+   body matches the arrow. */
+[data-tray-host="popover"] .lp-tray-surface {
+  background: transparent;
+  border-radius: 0;
+}
+
+/* Home ⇄ Settings inside the tray panel: crossfade with a short slide.
+   --lp-tray-slide is +6px going into Settings, -6px coming back. */
+.lp-tray-view {
+  animation: lp-tray-view-in 180ms ease-out both;
+}
+@keyframes lp-tray-view-in {
+  from {
+    opacity: 0;
+    transform: translate3d(var(--lp-tray-slide, 6px), 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lp-tray-item,
+  .lp-tray-view {
+    animation: none;
+  }
+}
+
+/* ── Per-platform font tuning ─────────────────────────────────────────── */
+[data-platform="macos"] {
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+    sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+[data-platform="windows"] {
+  --font-sans:
+    "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "Consolas", "Courier New", monospace;
+}
+
+[data-platform="linux"] {
+  --font-sans:
+    Inter, "Cantarell", "Ubuntu", "DejaVu Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Ubuntu Mono", "DejaVu Sans Mono", monospace;
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────── */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  font-family: var(--font-sans);
+  /* cv* + ss* enable Inter's stylistic alternates so the fallback reads close to SF;
+     no-op on SF / Segoe UI Variable. */
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01", "ss03";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  color: var(--color-fg);
+}
+
+/* The window background is transparent so the OS material (vibrancy on macOS,
+   Mica on Windows) shows through the title bar + sidebar. The main content
+   area paints its own translucent surface so reading remains crisp. */
+html,
+body {
+  background: transparent;
+}
+
+[data-platform="linux"] body {
+  /* No system blur on Linux — paint a solid window background instead */
+  background: var(--color-bg);
+}
+
+#root {
+  background: transparent;
+}
+
+/* macOS: round the window corners so the vibrancy material has a soft edge */
+[data-platform="macos"] body {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+::selection {
+  background: rgb(59 130 246 / 0.35);
+}
+
+/* ── Scrollbars ─────────────────────────────────────────────────────────
+   Default (Settings → "Show scrollbars" off): hidden. Opt in via the
+   <html data-show-scrollbars="true"> attribute set by App.tsx.
+
+   Implementation note: WebKit caches ::-webkit-scrollbar pseudo-element
+   styles and does NOT invalidate them when only the color changes through
+   an ancestor attribute flip — toggling off would leave a ghost rail until
+   the next reload. So both the gutter geometry (width/height) AND the
+   modern `scrollbar-width` property change on toggle, which forces the
+   layout to recompute and the scrollbar to repaint immediately. */
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* Off (default + explicit "false") */
+html { scrollbar-width: none; }
+html:not([data-show-scrollbars="true"]) ::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* On */
+html[data-show-scrollbars="true"] {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(0 0 0 / 0.18) transparent;
+}
+[data-show-scrollbars="true"] ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+[data-show-scrollbars="true"] ::-webkit-scrollbar-thumb {
+  background: rgb(0 0 0 / 0.18);
+  background-clip: padding-box;
+}
+[data-show-scrollbars="true"] *:hover > ::-webkit-scrollbar-thumb,
+[data-show-scrollbars="true"] :hover::-webkit-scrollbar-thumb {
+  background: rgb(0 0 0 / 0.28);
+  background-clip: padding-box;
+}
+html[data-theme="dark"][data-show-scrollbars="true"] {
+  scrollbar-color: rgb(255 255 255 / 0.10) transparent;
+}
+[data-theme="dark"][data-show-scrollbars="true"] ::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.10);
+  background-clip: padding-box;
+}
+[data-theme="dark"][data-show-scrollbars="true"] *:hover > ::-webkit-scrollbar-thumb,
+[data-theme="dark"][data-show-scrollbars="true"] :hover::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.18);
+  background-clip: padding-box;
+}
+
+/* ── Range slider ───────────────────────────────────────────────────────
+   Native range inputs theme the filled track + thumb via `accent-color`,
+   but leave the unfilled track at the browser default (a near-white gray)
+   which reads as a glaring bright bar against our dark surfaces. We paint
+   the track ourselves via a gradient driven by --lp-range-pct (set inline
+   from the React value) so both halves respond to the theme. */
+.lp-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    var(--lp-range-fill) 0%,
+    var(--lp-range-fill) var(--lp-range-pct, 0%),
+    var(--lp-range-track) var(--lp-range-pct, 0%),
+    var(--lp-range-track) 100%
+  );
+  outline: none;
+  cursor: pointer;
+  --lp-range-fill: #3b82f6;
+  --lp-range-track: rgb(0 0 0 / 0.08);
+  --lp-range-thumb: #ffffff;
+  --lp-range-thumb-border: rgb(0 0 0 / 0.18);
+}
+
+[data-theme="dark"] .lp-range {
+  --lp-range-fill: #2563eb;
+  --lp-range-track: rgb(255 255 255 / 0.08);
+  --lp-range-thumb: #d4d4d8; /* zinc-300 */
+  --lp-range-thumb-border: rgb(255 255 255 / 0.18);
+}
+
+.lp-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--lp-range-thumb);
+  border: 1px solid var(--lp-range-thumb-border);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+  cursor: pointer;
+}
+
+.lp-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--lp-range-thumb);
+  border: 1px solid var(--lp-range-thumb-border);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+  cursor: pointer;
+}
+
+.lp-range:focus-visible {
+  outline: 2px solid rgb(59 130 246 / 0.6);
+  outline-offset: 2px;
+}
+
+/* ── Tauri drag region ────────────────────────────────────────────────── */
+[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+[data-tauri-drag-region] button,
+[data-tauri-drag-region] a,
+[data-tauri-drag-region] input {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* ── Pointer cursor on interactive elements ───────────────────────────────
+   Tailwind v4's Preflight resets <button> to `cursor: default` to match the
+   raw browser default. We want every clickable control (nav buttons, back
+   links, list rows, cards, dialog dismissers) to read as clickable, so we
+   restore `cursor: pointer` app-wide for enabled buttons and role=button
+   elements. Disabled controls keep the default arrow. Anchors with an href
+   already get a pointer from the browser. Individual elements can still opt
+   out with the `cursor-default` / `cursor-not-allowed` utilities, which sit
+   in a later layer and win. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  label[for],
+  summary {
+    cursor: pointer;
+  }
+}
+
+/* ── First-run setup ──────────────────────────────────────────────────────
+   Keyframes for the setup card (components/setup). Applied inline with
+   per-element delays; every animated element carries `.lp-ob-anim` so
+   reduced motion drops straight to the final frame. */
+@keyframes lp-ob-in-right { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+@keyframes lp-ob-in-left { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+@keyframes lp-ob-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes lp-ob-pop {
+  0% { opacity: 0; transform: scale(0.6); }
+  60% { opacity: 1; transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes lp-ob-halo { 0%, 100% { transform: scale(0.9); opacity: 0.5; } 50% { transform: scale(1.18); opacity: 1; } }
+@keyframes lp-ob-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes lp-ob-draw { from { stroke-dashoffset: 32; } to { stroke-dashoffset: 0; } }
+@keyframes lp-ob-burst {
+  0% { opacity: 0; transform: translate(0, 0) scale(0.3); }
+  25% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(1); }
+}
+@keyframes lp-ob-spin { to { transform: rotate(360deg); } }
+@keyframes lp-ob-ring {
+  0%, 100% { transform: rotate(0); }
+  15% { transform: rotate(16deg); }
+  30% { transform: rotate(-14deg); }
+  45% { transform: rotate(10deg); }
+  60% { transform: rotate(-6deg); }
+  75% { transform: rotate(3deg); }
+}
+@keyframes lp-ob-sheen { 0% { transform: translateX(-120%); } 60%, 100% { transform: translateX(220%); } }
+@keyframes lp-ob-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes lp-ob-win-in { from { opacity: 0; transform: scale(0.96) translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes lp-ob-win-out { to { opacity: 0; transform: scale(0.94) translateY(10px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-ob-anim {
+    animation: none !important;
+  }
+  .lp-ob-motion-only {
+    display: none !important;
+  }
+}

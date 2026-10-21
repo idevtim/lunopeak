@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions & Ideas
+    url: https://github.com/idevtim/lunopeak/discussions
+    about: Ask a question or float an idea before opening an issue
+  - name: FAQ
+    url: https://lunopeak.com/#faq
+    about: Answers to common questions
+  - name: Report a security vulnerability
+    url: https://github.com/idevtim/lunopeak/security/advisories/new
+    about: Please report security issues privately, not as a public issue

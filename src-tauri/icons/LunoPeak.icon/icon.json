@@ -1,0 +1,63 @@
+{
+  "fill": {
+    "linear-gradient": [
+      "extended-srgb:0.050980,0.090196,0.313725,1.000000",
+      "extended-srgb:0.105882,0.176471,0.627451,1.000000"
+    ]
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-srgb:0.992157,0.968627,0.882353,1.000000"
+              }
+            }
+          ],
+          "image-name": "moon.svg",
+          "name": "Moon",
+          "opacity": 0.85,
+          "opacity-specializations": [
+            {
+              "appearance": "dark",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "image-name": "mountains.svg",
+          "name": "Mountains",
+          "opacity": 0.55
+        }
+      ],
+      "shadow": {
+        "kind": "none",
+        "opacity": 0
+      },
+      "specular": false
+    },
+    {
+      "glass": true,
+      "layers": [
+        {
+          "image-name": "owl.svg",
+          "name": "Owl"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "specular": true
+    }
+  ],
+  "supported-platforms": {
+    "circles": [
+      "watchOS"
+    ],
+    "squares": "shared"
+  }
+}

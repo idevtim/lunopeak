@@ -1,0 +1,25 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for the LunoPeak main window",
+  "windows": ["main", "about", "tray-panel"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-set-size",
+    "core:window:allow-inner-size",
+    "core:window:allow-scale-factor",
+    "dialog:default",
+    "fs:default",
+    "os:default",
+    "shell:default",
+    "opener:default",
+    "updater:default",
+    "autostart:default",
+    "notification:default",
+    "window-state:default"
+  ]
+}

@@ -1,0 +1,35 @@
+#!/bin/bash
+set -euo pipefail
+
+# Zero the AppImage marker bytes in an ELF header so the file can be executed
+# under binfmt_misc emulation (see the rationale in Dockerfile.linux-build).
+#
+# A type-2 AppImage writes 0x41 0x49 0x02 — "AI" plus the type — over bytes
+# 8..10, which the ELF spec reserves as padding. binfmt_misc's x86_64
+# registration masks those bytes as must-be-zero, so a stock AppImage never
+# matches and the kernel refuses to exec it on a foreign architecture.
+#
+# Idempotent, and a no-op on files that aren't marked, so it's safe to run
+# over a whole cache directory on every build.
+#
+# Usage: appimage-unmagic FILE...
+
+if [ $# -eq 0 ]; then
+  echo "usage: appimage-unmagic FILE..." >&2
+  exit 1
+fi
+
+for f in "$@"; do
+  [ -f "$f" ] || continue
+
+  # Only touch ELF files — refuse to corrupt anything else that happens to be
+  # passed in (the cache also holds plain shell scripts).
+  if [ "$(dd if="$f" bs=1 count=4 status=none | od -An -tx1 | tr -d ' \n')" != "7f454c46" ]; then
+    continue
+  fi
+
+  if [ "$(dd if="$f" bs=1 skip=8 count=2 status=none | od -An -tx1 | tr -d ' \n')" = "4149" ]; then
+    printf '\x00\x00\x00' | dd of="$f" bs=1 seek=8 count=3 conv=notrunc status=none
+    echo "   appimage-unmagic: cleared marker on $(basename "$f")"
+  fi
+done

@@ -1,0 +1,67 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+*.tsbuildinfo
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Tauri
+src-tauri/target
+src-tauri/gen
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Claude Code — personal overrides (all of .claude/ is unpublished, below)
+CLAUDE.local.md
+
+# Tauri updater signing keys — never commit. Belt-and-suspenders for the
+# case where a key file is accidentally copied into the repo tree.
+*.key
+*.key.pub
+.tauri/
+
+# Playwright
+.playwright-mcp/
+playwright-report/
+test-results/
+playwright/.cache/
+
+# Rendered preview from `npm run icons:mac` — regenerate, never commit.
+src-tauri/icons/.preview/
+
+# ---- Unpublished record ----
+# Kept out of the public repo: the Claude Code / Codex project skills and
+# settings (the maintainer's release workflow), launch and marketing drafts,
+# and internal design specs. They still live on disk, and
+# `scripts/private-sync.sh` backs them up to the private archive repo.
+# Keep this list in step with PATHS in that script.
+.claude/
+.agents/
+posts/
+docs/superpowers/
+.remember/
+
+# The private archive's git directory, used by scripts/private-sync.sh.
+.private.git/

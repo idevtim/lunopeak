@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#ECF1F8"/>
+    </linearGradient>
+    <linearGradient id="tuft" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#B4BFCC"/>
+    </linearGradient>
+    <linearGradient id="beak" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F47421"/>
+      <stop offset="100%" stop-color="#DD440B"/>
+    </linearGradient>
+    <linearGradient id="feet" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#EF5F14"/>
+      <stop offset="100%" stop-color="#FBA347"/>
+    </linearGradient>
+  </defs>
+  <g>
+    <path fill="url(#tuft)" d="M161.95,271.57 L239.18,411.09 L122.08,438.5 Z"/>
+    <path fill="url(#tuft)" d="M570.55,271.57 L610.41,438.5 L493.31,411.09 Z"/>
+    <path fill="url(#feet)" d="M284.03,954.24 L447.22,954.24 L447.22,979.15 C447.22,1016.53 411.09,1024 378.71,1019.02 L366.25,996.59 L353.79,1019.02 C321.4,1024 284.03,1016.53 284.03,979.15 Z"/>
+    <path stroke="#D9550F" stroke-width="4.36" stroke-linecap="round" d="M315.17,961.71 L315.17,1006.56"/>
+    <path stroke="#D9550F" stroke-width="4.36" stroke-linecap="round" d="M341.33,961.71 L341.33,1014.03"/>
+    <path stroke="#D9550F" stroke-width="4.36" stroke-linecap="round" d="M391.16,961.71 L391.16,1014.03"/>
+    <path stroke="#D9550F" stroke-width="4.36" stroke-linecap="round" d="M417.32,961.71 L417.32,1006.56"/>
+    <ellipse fill="url(#body)" cx="366.25" cy="646.54" rx="289.01" ry="312.68"/>
+    <path fill="#FDC76B" d="M160.08,520.72 a103.4,103.4 0 1,0 206.79,0 a103.4,103.4 0 1,0 -206.79,0 Z"/>
+    <path fill="#FED9A3" d="M184.37,520.72 a79.1,79.1 0 1,0 158.21,0 a79.1,79.1 0 1,0 -158.21,0 Z"/>
+    <path fill="#0D121F" d="M220.5,528.19 a51.08,51.08 0 1,0 102.15,0 a51.08,51.08 0 1,0 -102.15,0 Z"/>
+    <path fill="#FFFFFF" d="M270.95,509.51 a15.57,15.57 0 1,0 31.14,0 a15.57,15.57 0 1,0 -31.14,0 Z"/>
+    <path fill="#C2C7D0" d="M247.28,554.36 a9.34,9.34 0 1,0 18.69,0 a9.34,9.34 0 1,0 -18.69,0 Z"/>
+    <path fill="#FDC76B" d="M365.63,520.72 a103.4,103.4 0 1,0 206.79,0 a103.4,103.4 0 1,0 -206.79,0 Z"/>
+    <path fill="#FED9A3" d="M389.92,520.72 a79.1,79.1 0 1,0 158.21,0 a79.1,79.1 0 1,0 -158.21,0 Z"/>
+    <path fill="#0D121F" d="M409.85,528.19 a51.08,51.08 0 1,0 102.15,0 a51.08,51.08 0 1,0 -102.15,0 Z"/>
+    <path fill="#FFFFFF" d="M460.3,509.51 a15.57,15.57 0 1,0 31.14,0 a15.57,15.57 0 1,0 -31.14,0 Z"/>
+    <path fill="#C2C7D0" d="M436.63,554.36 a9.34,9.34 0 1,0 18.69,0 a9.34,9.34 0 1,0 -18.69,0 Z"/>
+    <path fill="url(#beak)" d="M325.14,625.36 L407.36,625.36 L366.25,707.58 Z"/>
+  </g>
+</svg>

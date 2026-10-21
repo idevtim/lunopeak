@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LunoPeak</title>
+    <style>
+      /* Pre-React splash — visible from the first paint, before main.tsx hydrates.
+         React's BootSplash renders on top with the canvas star warp; once hydrated
+         this static layer is hidden underneath and disappears with it on fade-out. */
+      #boot-splash-static {
+        position: fixed;
+        inset: 0;
+        z-index: 99;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0a0a0b;
+      }
+      #boot-splash-static img {
+        width: 112px;
+        height: 112px;
+        border-radius: 28%;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+        animation:
+          lp-boot-zoom-in 900ms cubic-bezier(0.16, 1, 0.3, 1) both,
+          lp-boot-pulse 2.2s ease-in-out 900ms infinite;
+      }
+      @keyframes lp-boot-zoom-in {
+        0%   { transform: scale(0.35); opacity: 0; filter: brightness(1.4); }
+        60%  { opacity: 1; }
+        100% { transform: scale(1); opacity: 1; filter: brightness(1); }
+      }
+      @keyframes lp-boot-pulse {
+        0%, 100% { transform: scale(1); filter: brightness(1); }
+        50%      { transform: scale(1.04); filter: brightness(1.12); }
+      }
+      /* Tray panel webview must not paint a splash or opaque body — the window
+         is transparent and the rounded container comes from React. The
+         `tray-panel-root` class is set inline (see <script> below) before any
+         paint, so these rules apply on the very first frame. */
+      html.tray-panel-root,
+      html.tray-panel-root body { background: transparent !important; }
+      html.tray-panel-root #boot-splash-static { display: none; }
+    </style>
+    <script>
+      if (location.hash.startsWith("#/tray-panel")) {
+        document.documentElement.classList.add("tray-panel-root");
+      }
+    </script>
+  </head>
+  <body class="h-full bg-zinc-950 text-zinc-50 antialiased">
+    <div id="boot-splash-static" aria-hidden="true">
+      <img src="/app-icon.png" alt="" draggable="false" />
+    </div>
+    <div id="root" class="h-full"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
