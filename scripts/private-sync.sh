@@ -10,7 +10,7 @@
 # `.gitignore`, so the public repo will never take them, but they still need to be somewhere other
 # than one laptop.
 #
-# `idevtim/lunopeak-app` is that somewhere. It is the **private archive**: it keeps the full history
+# `idevtim/lunopeak-archive` is that somewhere. It is the **private archive**: it keeps the full history
 # from before LunoPeak was open sourced, and this script commits updates to the unpublished files on
 # top of it. The *source* in that repo is frozen at the day of the split and is expected to go
 # stale — the live source is the public repo. Only the paths listed below are ever staged here.
@@ -37,7 +37,7 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GIT_DIR="$PROJECT_DIR/.private.git"
-REMOTE="${LUNOPEAK_PRIVATE_REMOTE:-https://github.com/idevtim/lunopeak-app.git}"
+REMOTE="${LUNOPEAK_PRIVATE_REMOTE:-https://github.com/idevtim/lunopeak-archive.git}"
 BRANCH="main"
 
 # Everything the public repo refuses. Keep in step with the "Unpublished record" block in `.gitignore`.
