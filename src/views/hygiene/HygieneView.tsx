@@ -355,6 +355,14 @@ function StopAction({ issue }: { issue: HygieneIssue }) {
     <Button
       disabled={busy}
       onClick={async () => {
+        const ok = await confirm({
+          title: "Stop this process?",
+          body: "It stops right away, and anything it hasn't saved is lost.",
+          items: [`${issue.message} (pid ${pid})`],
+          confirmLabel: "Stop it",
+          destructive: true,
+        });
+        if (!ok) return;
         setBusy(true);
         try {
           await api.killProcess(pid);
@@ -384,7 +392,7 @@ function DeleteBranchesAction({ issues }: { issues: HygieneIssue[] }) {
       onClick={async () => {
         const ok = await confirm({
           title: `${label}?`,
-          body: "These local branches haven't had a commit in over 90 days. Only the local copies are deleted; anything pushed stays on the remote.",
+          body: "These local branches haven't had a commit in over 90 days. Only the local copies are deleted; anything pushed stays on the remote. Commits that were never merged or pushed are deleted with them.",
           items: targets.map((i) => `${i.repoName}: ${i.target}`),
           confirmLabel: label,
           destructive: true,

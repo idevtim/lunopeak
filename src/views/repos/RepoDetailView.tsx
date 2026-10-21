@@ -171,6 +171,13 @@ function ActionBar({
   const [pulling, setPulling] = useState(false);
 
   const pull = async () => {
+    const ok = await confirm({
+      title: "Pull the latest changes?",
+      body: "Runs git pull, which fetches from this repo's remote with your git credentials and merges into the current branch.",
+      items: [path],
+      confirmLabel: "Pull latest",
+    });
+    if (!ok) return;
     setPulling(true);
     try {
       const out = await api.gitPull(path);

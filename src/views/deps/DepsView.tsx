@@ -10,6 +10,7 @@ import { EmptyState, ErrorState, PageLoading, Bone } from "@/components/ui/PageS
 import { Pill } from "@/components/ui/Pill";
 import { Button } from "@/components/ui/Button";
 import { Segmented } from "@/components/ui/Segmented";
+import { confirm } from "@/stores/confirmStore";
 import { toast } from "@/stores/toastStore";
 import { cn } from "@/lib/utils";
 import type { AuditManager, AuditReport, AuditTarget, DepEntry } from "@/types/api";
@@ -248,7 +249,18 @@ function SecurityRow({
     );
   } else if (target.canFix && !residual) {
     action = (
-      <Button disabled={busy} onClick={() => fix.mutate()}>
+      <Button
+        disabled={busy}
+        onClick={async () => {
+          const ok = await confirm({
+            title: `Fix ${target.repoName} automatically?`,
+            body: `Runs ${fixCommand(target.manager)}, which downloads packages and can change package.json, the lock file and installed packages.`,
+            items: [target.repoPath],
+            confirmLabel: "Fix automatically",
+          });
+          if (ok) fix.mutate();
+        }}
+      >
         {fix.isPending ? "Fixing…" : "Fix automatically"}
       </Button>
     );
@@ -346,6 +358,13 @@ function impactLine(r: AuditReport): string {
 /** Shows the advisories for managers without a safe automatic fix. */
 function auditCommand(manager: AuditManager): string {
   return manager === "composer" ? "composer audit" : `${manager} audit`;
+}
+
+/** What the "Fix automatically" button runs, mirroring `audit.rs::run_audit_fix`. */
+function fixCommand(manager: AuditManager): string {
+  if (manager === "composer") return "composer update --with-dependencies";
+  if (manager === "pnpm") return "pnpm audit --fix";
+  return `${manager} audit fix`;
 }
 
 /**

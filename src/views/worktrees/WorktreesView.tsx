@@ -143,7 +143,15 @@ export function WorktreesView() {
                     agent={inUse.get(w.worktreePath) ?? null}
                     busy={prune.isPending || unlock.isPending}
                     onOpen={() => openInEditor(w.worktreePath)}
-                    onUnlock={() => unlock.mutate(w)}
+                    onUnlock={async () => {
+                      const ok = await confirm({
+                        title: "Unlock this worktree?",
+                        body: "Once unlocked, git can prune it if its folder goes missing.",
+                        items: [tildify(w.worktreePath)],
+                        confirmLabel: "Unlock",
+                      });
+                      if (ok) unlock.mutate(w);
+                    }}
                     onRemove={() =>
                       void askRemove(grouped.get(repo)!.filter((x) => x.prunable))
                     }

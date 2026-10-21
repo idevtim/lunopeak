@@ -8,8 +8,8 @@
 //!   * `/api/v2/incidents/unresolved.json` — open incidents
 //!     `{ incidents: [{ name, status, impact, shortlink, started_at, updated_at }] }`
 //!
-//! We fetch all enabled providers in parallel (rayon) on every call, cache
-//! the result for `STATUS_TTL` so the dashboard's polling cadence doesn't
+//! We fetch only the enabled providers, in parallel (rayon), caching each
+//! one for `STATUS_TTL` so the dashboard's polling cadence doesn't
 //! hammer the StatusPage CDN, and fall back to an `"unknown"` indicator on
 //! any error so a transient outage of *the status site* doesn't masquerade
 //! as a green check.
@@ -57,52 +57,57 @@ const PROVIDERS: &[ProviderEndpoint] = &[
     },
 ];
 
-struct CacheEntry {
-    fetched_at: Instant,
-    list: ProviderStatusList,
+/// Per-provider cache, so a provider is only ever fetched while it's enabled
+/// and toggling one on doesn't refetch the others.
+static CACHE: Mutex<Vec<(Instant, ProviderStatus)>> = Mutex::new(Vec::new());
+
+/// Endpoints that need a network round-trip: enabled, and with no cache entry
+/// younger than `STATUS_TTL`. Disabled providers are never returned, so their
+/// status page is never contacted.
+fn endpoints_to_fetch(
+    enabled_ids: &[&str],
+    is_fresh: impl Fn(&str) -> bool,
+) -> Vec<&'static ProviderEndpoint> {
+    PROVIDERS
+        .iter()
+        .filter(|p| enabled_ids.contains(&p.id) && !is_fresh(p.id))
+        .collect()
 }
 
-static CACHE: Mutex<Option<CacheEntry>> = Mutex::new(None);
-
-/// Returns the current status for each requested provider. `enabled_ids`
-/// gates the parallel fan-out so users who've disabled e.g. Cursor don't
-/// pay the network round-trip for its status page.
+/// Returns the current status for each enabled provider, in `PROVIDERS` order.
+/// Only enabled providers are fetched — users who've disabled e.g. Cursor never
+/// pay (or reveal) the round-trip to its status page.
 pub fn collect(enabled_ids: &[&str]) -> ProviderStatusList {
-    if let Ok(guard) = CACHE.lock() {
-        if let Some(entry) = guard.as_ref() {
-            if entry.fetched_at.elapsed() < STATUS_TTL {
-                // Filter the cached snapshot to only the providers the caller
-                // currently wants. We don't re-fetch when the gate set
-                // changes; the cache always holds the union and we slice
-                // here. Cheap and avoids cache thrash when the user toggles.
-                return ProviderStatusList {
-                    providers: entry
-                        .list
-                        .providers
-                        .iter()
-                        .filter(|p| enabled_ids.contains(&p.provider.as_str()))
-                        .cloned()
-                        .collect(),
-                };
-            }
+    let is_fresh = |cache: &[(Instant, ProviderStatus)], id: &str| {
+        cache
+            .iter()
+            .any(|(at, s)| s.provider == id && at.elapsed() < STATUS_TTL)
+    };
+
+    let stale = match CACHE.lock() {
+        Ok(guard) => endpoints_to_fetch(enabled_ids, |id| is_fresh(&guard, id)),
+        Err(_) => endpoints_to_fetch(enabled_ids, |_| false),
+    };
+    let fetched: Vec<ProviderStatus> = stale.par_iter().map(|p| fetch_one(p)).collect();
+
+    let mut cache = match CACHE.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            return ProviderStatusList { providers: fetched };
         }
-    }
-
-    let providers: Vec<ProviderStatus> = PROVIDERS.par_iter().map(|p| fetch_one(p)).collect();
-    let list = ProviderStatusList { providers };
-
-    if let Ok(mut guard) = CACHE.lock() {
-        *guard = Some(CacheEntry {
-            fetched_at: Instant::now(),
-            list: list.clone(),
-        });
+    };
+    let now = Instant::now();
+    for status in fetched {
+        cache.retain(|(_, s)| s.provider != status.provider);
+        cache.push((now, status));
     }
 
     ProviderStatusList {
-        providers: list
-            .providers
-            .into_iter()
-            .filter(|p| enabled_ids.contains(&p.provider.as_str()))
+        providers: PROVIDERS
+            .iter()
+            .filter(|p| enabled_ids.contains(&p.id))
+            .filter_map(|p| cache.iter().find(|(_, s)| s.provider == p.id))
+            .map(|(_, s)| s.clone())
             .collect(),
     }
 }
@@ -234,6 +239,22 @@ struct RawIncident {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ids(endpoints: Vec<&'static ProviderEndpoint>) -> Vec<&'static str> {
+        endpoints.into_iter().map(|p| p.id).collect()
+    }
+
+    #[test]
+    fn disabled_providers_are_never_fetched() {
+        assert_eq!(ids(endpoints_to_fetch(&["claude"], |_| false)), vec!["claude"]);
+        assert!(endpoints_to_fetch(&[], |_| false).is_empty());
+    }
+
+    #[test]
+    fn fresh_providers_are_not_refetched() {
+        let fetch = endpoints_to_fetch(&["claude", "codex", "cursor"], |id| id == "codex");
+        assert_eq!(ids(fetch), vec!["claude", "cursor"]);
+    }
 
     /// Standard Atlassian payload: both `started_at` and `created_at` present.
     /// Regression for the serde `alias` that collapsed them into one field and

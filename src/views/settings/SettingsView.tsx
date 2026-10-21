@@ -1510,7 +1510,9 @@ function AboutCategory({ s, platform }: { s: Settings; platform: Platform }) {
           <IconTile icon={ShieldCheck} tone="green" />
           <p className="m-0 flex-1 text-[13px] leading-[1.55] text-zinc-700 text-pretty dark:text-zinc-300">
             No account, no cloud sync and no telemetry. LunoPeak reads files on {machine} and only goes online
-            to services you already use: Anthropic for plan limits, GitHub for updates.
+            to services you already use: Anthropic, ChatGPT and Cursor for plan limits, their public status pages,
+            GitHub for pull requests and updates, and your AI provider if you use the Assistant. The privacy policy
+            lists every connection.
           </p>
         </SettingBlock>
         <LinkRow

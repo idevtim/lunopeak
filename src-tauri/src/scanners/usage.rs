@@ -45,16 +45,23 @@ pub fn collect(agents: &AgentSources, force: bool) -> UsageLimits {
         return demo_usage_limits();
     }
     let mut providers = Vec::new();
-    if let Some(p) = claude_usage(force) {
-        providers.push(p);
+    // Each provider is gated on its own toggle *before* any request, so turning
+    // an agent off stops its sign-in leaving the machine — not just hides the
+    // row. The privacy page promises exactly this.
+    if agents.claude_code {
+        if let Some(p) = claude_usage(force) {
+            providers.push(p);
+        }
     }
     if let Some(p) = codex_usage(agents.codex) {
         providers.push(p);
     }
     // `cursor_web` is gated separately from `cursor` because the cookie read
     // triggers an OS Keychain prompt on macOS Chromium browsers — we don't
-    // want that firing unprompted just because Cursor is installed.
-    if let Some(p) = cursor_usage(agents.cursor_web) {
+    // want that firing unprompted just because Cursor is installed. It also
+    // requires `cursor` itself: the Settings switch greys out when Cursor is
+    // off but keeps its stored value, so honor both here.
+    if let Some(p) = cursor_usage(agents.cursor && agents.cursor_web) {
         providers.push(p);
     }
     UsageLimits { providers }
@@ -490,32 +497,56 @@ fn read_claude_creds() -> Option<ClaudeCreds> {
     }
 }
 
+/// Writes the renewed credentials back through `security -i`, which reads the
+/// command from stdin. Passing the JSON as a `-w <payload>` argument would put
+/// the tokens in the process table, where any local process could read them.
+/// `/usr/bin/security` is kept (rather than the Security framework) because
+/// Claude Code's keychain item already trusts it, so no access prompt appears.
 #[cfg(target_os = "macos")]
 fn write_claude_creds(creds: &ClaudeCreds) -> Result<(), String> {
-    use std::process::Command;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
     let account = keychain_account().ok_or_else(|| "no acct on keychain entry".to_string())?;
     let payload = serde_json::to_string(creds).map_err(|e| e.to_string())?;
-    let out = Command::new("security")
-        .args([
-            "add-generic-password",
-            "-U",
-            "-s",
-            "Claude Code-credentials",
-            "-a",
-            &account,
-            "-w",
-            &payload,
-        ])
-        .output()
+    let line = format!(
+        "add-generic-password -U -s {} -a {} -w {}\n",
+        security_quote("Claude Code-credentials"),
+        security_quote(&account),
+        security_quote(&payload),
+    );
+    let mut child = Command::new("security")
+        .arg("-i")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| e.to_string())?;
-    if !out.status.success() {
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| "security stdin unavailable".to_string())?
+        .write_all(line.as_bytes())
+        .map_err(|e| e.to_string())?;
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    // Interactive mode exits 0 even when the command fails; it reports the
+    // failure as "<command>: returned <code>" instead.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if !out.status.success() || !stderr.trim().is_empty() || stdout.contains(": returned ") {
         return Err(format!(
-            "status={:?} stderr={}",
+            "status={:?} output={}",
             out.status.code(),
-            String::from_utf8_lossy(&out.stderr).trim()
+            format!("{} {}", stdout.trim(), stderr.trim()).trim()
         ));
     }
     Ok(())
+}
+
+/// Quotes one argument for `security -i`'s command line: wrapped in double
+/// quotes, with backslashes and double quotes backslash-escaped.
+#[cfg(target_os = "macos")]
+fn security_quote(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 #[cfg(target_os = "macos")]
@@ -1912,6 +1943,30 @@ fn cursor_install_paths() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Turning Claude Code off must skip its usage fetch entirely, so the
+    /// Claude sign-in never leaves the machine. (Disabled Codex / Cursor still
+    /// read their local files, which callers filter out; only the network
+    /// paths are gated.)
+    #[test]
+    fn disabled_claude_is_not_collected() {
+        let agents = AgentSources {
+            claude_code: false,
+            codex: false,
+            cursor: false,
+            cursor_web: true,
+            initialized: true,
+        };
+        let limits = collect(&agents, false);
+        assert!(limits.providers.iter().all(|p| p.provider != "claude"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn security_quote_escapes_quotes_and_backslashes() {
+        assert_eq!(security_quote(r#"a "b" \c"#), r#""a \"b\" \\c""#);
+        assert_eq!(security_quote("it's"), r#""it's""#);
+    }
 
     fn codex_window(used_percent: f64, resets_at: Option<i64>) -> CodexWindow {
         CodexWindow {
