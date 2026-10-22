@@ -75,8 +75,11 @@ All builds auto-update except Linux RPM (manual). What changed in each version i
 
 ## Screenshots
 
-### Dashboard
-![Dashboard](assets/screenshots/dashboard.png)
+### Home
+![Home](assets/screenshots/dashboard.png)
+
+### Menu bar
+<img src="assets/screenshots/menu-bar.png" alt="Menu bar" width="452">
 
 ### Sessions
 ![Sessions](assets/screenshots/sessions.png)
