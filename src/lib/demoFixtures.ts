@@ -507,7 +507,7 @@ const LIVE_AGENT_CWD: Record<"claude" | "codex" | "cursor", string> = {
 
 export const liveActivity: LiveActivity = {
   feed: LIVE_TOOLS.map((t, i) => ({
-    ts: NOW - i * 12 - 4,
+    ts: (NOW - i * 12 - 4) * 1000,
     sessionId: LIVE_AGENT_SESSIONS[t.agent],
     cwd: LIVE_AGENT_CWD[t.agent],
     tool: t.tool,
@@ -518,7 +518,7 @@ export const liveActivity: LiveActivity = {
     {
       sessionId: "sess-live-1",
       cwd: repoPath("northstar-web"),
-      lastTs: NOW - 4,
+      lastTs: (NOW - 4) * 1000,
       lastTool: "Edit",
       lastSummary: "src/lib/tauri.ts:42",
       todos: [
@@ -531,7 +531,7 @@ export const liveActivity: LiveActivity = {
     {
       sessionId: "sess-live-2",
       cwd: repoPath("atlas-api"),
-      lastTs: NOW - 56,
+      lastTs: (NOW - 56) * 1000,
       lastTool: "Bash",
       lastSummary: "git status",
       todos: [
@@ -544,7 +544,7 @@ export const liveActivity: LiveActivity = {
     {
       sessionId: "sess-live-3",
       cwd: repoPath("compass-docs"),
-      lastTs: NOW - 22,
+      lastTs: (NOW - 22) * 1000,
       lastTool: "Edit",
       lastSummary: "content/intro.md:14",
       todos: [
