@@ -306,6 +306,8 @@ fn parse_rollout(path: &Path) -> Option<Session> {
         usage,
         cost_usd: cost,
         cost_by_day,
+        subagent_count: 0,
+        subagent_cost_usd: 0.0,
         tool_uses: Default::default(),
         tool_errors: 0,
         tool_errors_by_name: Default::default(),

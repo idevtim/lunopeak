@@ -155,7 +155,11 @@ function Body({
         <StatCard
           label="All time"
           value={formatUsd(c.totalUsd, true)}
-          hint={`${plural(sessions, "session")} across ${plural(c.byRepo.length, "project")}`}
+          hint={
+            c.subagentUsd > 0
+              ? `${plural(sessions, "session")}, ${formatUsd(c.subagentUsd, true)} of it by subagents`
+              : `${plural(sessions, "session")} across ${plural(c.byRepo.length, "project")}`
+          }
         />
       </div>
 

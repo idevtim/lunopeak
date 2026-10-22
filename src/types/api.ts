@@ -221,7 +221,11 @@ export interface Session {
   messageCount: number;
   firstPrompt: string | null;
   usage: TokenUsage;
+  /** Includes subagent spend; `subagentCostUsd` is that share. */
   costUsd: number;
+  /** Subagent transcripts (`<id>/subagents/agent-*.jsonl`) rolled into this session. */
+  subagentCount: number;
+  subagentCostUsd: number;
   /** file_path → number of Edit/Write/NotebookEdit invocations. May be empty. */
   filesEdited?: Record<string, number>;
 }
@@ -278,7 +282,10 @@ export interface SessionDetail {
   startTs: number;
   endTs: number;
   messageCount: number;
+  /** Includes subagent spend; see `Session.subagentCostUsd`. */
   costUsd: number;
+  subagentCount: number;
+  subagentCostUsd: number;
   usage: TokenUsage;
   firstPrompt: string | null;
   filesModified: string[];
@@ -303,6 +310,8 @@ export interface RepoCost {
 
 export interface CostBreakdown {
   totalUsd: number;
+  /** Portion of `totalUsd` spent by subagent runs. */
+  subagentUsd: number;
   totalTokens: number;
   totalMessages: number;
   byModel: ModelUsage[];

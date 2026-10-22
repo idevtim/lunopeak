@@ -183,6 +183,8 @@ export const sessions: Session[] = Array.from({ length: 12 }, (_, i) => {
       cacheCreation1h: 0,
     },
     costUsd: 0.42 + i * 0.18,
+    subagentCount: i % 4 === 0 ? 2 : 0,
+    subagentCostUsd: i % 4 === 0 ? 0.11 + i * 0.03 : 0,
     filesEdited: i % 3 === 0
       ? {
           [`${repoPath(repo.name)}/src/lib/usage.rs`]: 3,
@@ -243,6 +245,8 @@ export const sessionDetail = (id: string): SessionDetail => {
     endTs: base.endTs,
     messageCount: base.messageCount,
     costUsd: base.costUsd,
+    subagentCount: base.subagentCount,
+    subagentCostUsd: base.subagentCostUsd,
     usage: base.usage,
     firstPrompt: base.firstPrompt,
     filesModified: [
@@ -353,6 +357,7 @@ export const transcriptMatches = (query: string): TranscriptMatch[] => {
 
 export const costs: CostBreakdown = {
   totalUsd: 334.90,
+  subagentUsd: 41.20,
   totalTokens: 12_400_000,
   totalMessages: 2_840,
   byModel: sessionStats.byModel,

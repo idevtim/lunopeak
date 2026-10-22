@@ -538,6 +538,13 @@ pub struct Session {
     /// `src/types/api.ts` stays 1:1 with the serialized shape.
     #[serde(skip)]
     pub cost_by_day: std::collections::BTreeMap<chrono::NaiveDate, f64>,
+    /// Subagent transcripts (`<id>/subagents/agent-*.jsonl`) rolled into this
+    /// session. Their tokens and spend are already included in `usage` /
+    /// `cost_usd`; `subagent_cost_usd` is that share, for display.
+    #[serde(default)]
+    pub subagent_count: u32,
+    #[serde(default)]
+    pub subagent_cost_usd: f64,
     /// Tool name → call count for this session.
     pub tool_uses: std::collections::BTreeMap<String, u32>,
     /// Count of tool_result blocks where is_error=true.
@@ -595,6 +602,8 @@ pub struct ModelUsage {
 #[serde(rename_all = "camelCase")]
 pub struct CostBreakdown {
     pub total_usd: f64,
+    /// Portion of `total_usd` spent by subagent runs.
+    pub subagent_usd: f64,
     pub total_tokens: u64,
     pub total_messages: u64,
     pub by_model: Vec<ModelUsage>,
@@ -690,7 +699,10 @@ pub struct SessionDetail {
     pub start_ts: i64,
     pub end_ts: i64,
     pub message_count: u32,
+    /// Includes subagent spend; see `Session::subagent_cost_usd`.
     pub cost_usd: f64,
+    pub subagent_count: u32,
+    pub subagent_cost_usd: f64,
     pub usage: TokenUsage,
     pub first_prompt: Option<String>,
     /// Unique file paths touched by Edit/Write/NotebookEdit during this

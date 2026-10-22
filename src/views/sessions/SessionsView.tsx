@@ -254,7 +254,10 @@ function SessionRow({
       <span className="text-right text-[12.5px] tabular-nums text-zinc-500 dark:text-zinc-400">
         {s.messageCount} msgs
       </span>
-      <span className="text-right text-[12.5px] font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+      <span
+        className="text-right text-[12.5px] font-semibold tabular-nums text-zinc-900 dark:text-zinc-100"
+        title={s.subagentCostUsd > 0 ? `Includes ${formatUsd(s.subagentCostUsd)} by ${plural(s.subagentCount, "subagent")}` : undefined}
+      >
         {s.costUsd > 0 ? formatUsd(s.costUsd) : "—"}
       </span>
       <ChevronRight size={12} strokeWidth={2.25} className="text-zinc-400" />

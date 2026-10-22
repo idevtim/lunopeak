@@ -3,8 +3,9 @@
 //!
 //! - **Claude**: no rate-limit metadata is persisted to disk, so we compute
 //!   actual token + cost spend in the trailing 5h / 7d windows by walking
-//!   message timestamps in ~/.claude/projects/**/*.jsonl. We skip files
-//!   whose mtime is older than 7 days — they cannot contribute.
+//!   message timestamps in ~/.claude/projects/**/*.jsonl, subagent
+//!   transcripts included. We skip files whose mtime is older than 7 days —
+//!   they cannot contribute.
 //! - **Codex**: live primary (5h) and secondary (weekly) `used_percent` +
 //!   reset from ChatGPT's backend (`codex_web`), falling back to the last
 //!   `rate_limits` block Codex wrote locally — `logs_2.sqlite` on older
@@ -16,6 +17,7 @@ use crate::models::{
 use crate::pricing;
 use crate::scanners::codex_web::{self, CodexWindow};
 use crate::scanners::cursor_web;
+use crate::scanners::sessions;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -170,22 +172,27 @@ fn claude_usage(force: bool) -> Option<ProviderUsage> {
             if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                 continue;
             }
-            let mtime = entry
-                .metadata()
-                .and_then(|m| m.modified())
-                .unwrap_or(UNIX_EPOCH);
-            if mtime < mtime_cutoff {
-                continue;
+            // Subagent runs bill against the same limits but live in their
+            // own transcripts under `<session-id>/subagents/`; each file is
+            // gated on its own mtime, so a fresh subagent of an old parent
+            // still counts.
+            for path in std::iter::once(path.clone()).chain(sessions::subagent_files(&path)) {
+                let mtime = fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .unwrap_or(UNIX_EPOCH);
+                if mtime < mtime_cutoff {
+                    continue;
+                }
+                newest_mtime = Some(newest_mtime.map_or(mtime, |prev| prev.max(mtime)));
+                scan_claude_file(
+                    &path,
+                    cutoff_5h,
+                    cutoff_7d,
+                    &mut acc_5h,
+                    &mut acc_7d,
+                    &mut acc_7d_by_model,
+                );
             }
-            newest_mtime = Some(newest_mtime.map_or(mtime, |prev| prev.max(mtime)));
-            scan_claude_file(
-                &path,
-                cutoff_5h,
-                cutoff_7d,
-                &mut acc_5h,
-                &mut acc_7d,
-                &mut acc_7d_by_model,
-            );
         }
     }
 

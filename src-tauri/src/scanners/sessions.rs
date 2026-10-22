@@ -33,9 +33,14 @@ pub struct Cache {
 }
 
 struct CacheEntry {
-    mtime: SystemTime,
+    stamp: Stamp,
     session: Session,
 }
+
+/// Newest mtime across a session's main transcript and its subagent
+/// transcripts, plus the subagent file count — so a subagent finishing (or a
+/// new one spawning) re-parses the parent even if the main file is untouched.
+type Stamp = (SystemTime, usize);
 
 impl Cache {
     pub fn new() -> Self {
@@ -43,7 +48,7 @@ impl Cache {
     }
 }
 
-fn parse_session_file(path: &Path) -> Option<Session> {
+fn parse_session_file(path: &Path, subagents: &[PathBuf]) -> Option<Session> {
     let file = File::open(path).ok()?;
     let reader = BufReader::new(file);
 
@@ -128,23 +133,7 @@ fn parse_session_file(path: &Path) -> Option<Session> {
                     .map(str::to_string);
             }
             if let Some(u) = msg.and_then(|m| m.get("usage")) {
-                let turn = TokenUsage {
-                    input: u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                    output: u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                    cache_read: u
-                        .get("cache_read_input_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0),
-                    cache_creation: u
-                        .get("cache_creation_input_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0),
-                    cache_creation_1h: u
-                        .get("cache_creation")
-                        .and_then(|c| c.get("ephemeral_1h_input_tokens"))
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0),
-                };
+                let turn = turn_usage(u);
                 if let Some(m) = msg.and_then(|m| m.get("model")).and_then(|v| v.as_str()) {
                     let turn_cost = pricing::cost_of(m, &turn, timestamp.or(start_ts));
                     cost += turn_cost;
@@ -156,11 +145,7 @@ fn parse_session_file(path: &Path) -> Option<Session> {
                         *cost_by_day.entry(day).or_insert(0.0) += turn_cost;
                     }
                 }
-                usage.input += turn.input;
-                usage.output += turn.output;
-                usage.cache_read += turn.cache_read;
-                usage.cache_creation += turn.cache_creation;
-                usage.cache_creation_1h += turn.cache_creation_1h;
+                add_usage(&mut usage, &turn);
             }
             if let Some(blocks) = msg
                 .and_then(|m| m.get("content"))
@@ -240,6 +225,12 @@ fn parse_session_file(path: &Path) -> Option<Session> {
         }
     }
 
+    let mut subagent_cost = 0.0_f64;
+    for sub in subagents {
+        subagent_cost += add_subagent_spend(sub, &mut usage, Some(&mut cost_by_day));
+    }
+    cost += subagent_cost;
+
     let session_id =
         session_id.or_else(|| path.file_stem().map(|s| s.to_string_lossy().to_string()))?;
 
@@ -260,6 +251,8 @@ fn parse_session_file(path: &Path) -> Option<Session> {
         usage,
         cost_usd: cost,
         cost_by_day,
+        subagent_count: subagents.len() as u32,
+        subagent_cost_usd: subagent_cost,
         tool_uses,
         tool_errors,
         tool_errors_by_name,
@@ -267,6 +260,95 @@ fn parse_session_file(path: &Path) -> Option<Session> {
         files_edited,
         bash_commands,
     })
+}
+
+fn turn_usage(u: &serde_json::Value) -> TokenUsage {
+    let n = |v: Option<&serde_json::Value>| v.and_then(|v| v.as_u64()).unwrap_or(0);
+    TokenUsage {
+        input: n(u.get("input_tokens")),
+        output: n(u.get("output_tokens")),
+        cache_read: n(u.get("cache_read_input_tokens")),
+        cache_creation: n(u.get("cache_creation_input_tokens")),
+        cache_creation_1h: n(u
+            .get("cache_creation")
+            .and_then(|c| c.get("ephemeral_1h_input_tokens"))),
+    }
+}
+
+fn add_usage(total: &mut TokenUsage, turn: &TokenUsage) {
+    total.input += turn.input;
+    total.output += turn.output;
+    total.cache_read += turn.cache_read;
+    total.cache_creation += turn.cache_creation;
+    total.cache_creation_1h += turn.cache_creation_1h;
+}
+
+/// Subagent transcripts belonging to a main session file. Claude Code writes
+/// each Task/Agent run to `<project>/<session-id>/subagents/agent-<id>.jsonl`
+/// (next to an `agent-<id>.meta.json` we don't need); the parent transcript
+/// only records the subagent's final result, never its tokens. Sorted for a
+/// stable cache stamp.
+pub(crate) fn subagent_files(session_file: &Path) -> Vec<PathBuf> {
+    let Some(stem) = session_file.file_stem() else {
+        return Vec::new();
+    };
+    let dir = session_file.with_file_name(stem).join("subagents");
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("jsonl"))
+        .collect();
+    files.sort();
+    files
+}
+
+/// Fold one subagent transcript's assistant-turn spend into the parent's
+/// totals. Only tokens and cost roll up — messages, tools and edits stay
+/// main-thread so the session's shape still reads as the conversation the
+/// user had. Returns the USD added.
+fn add_subagent_spend(
+    path: &Path,
+    usage: &mut TokenUsage,
+    mut cost_by_day: Option<&mut BTreeMap<NaiveDate, f64>>,
+) -> f64 {
+    let Ok(file) = File::open(path) else {
+        return 0.0;
+    };
+    let mut cost = 0.0;
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        // Cheap pre-filter: most lines are tool results and user turns.
+        if !line.contains("\"usage\"") {
+            continue;
+        }
+        let Ok(value): Result<serde_json::Value, _> = serde_json::from_str(&line) else {
+            continue;
+        };
+        if value.get("type").and_then(|v| v.as_str()) != Some("assistant") {
+            continue;
+        }
+        let msg = value.get("message");
+        let Some(u) = msg.and_then(|m| m.get("usage")) else {
+            continue;
+        };
+        let turn = turn_usage(u);
+        add_usage(usage, &turn);
+        let Some(m) = msg.and_then(|m| m.get("model")).and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let ts = value
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .and_then(parse_iso_ts);
+        let turn_cost = pricing::cost_of(m, &turn, ts);
+        cost += turn_cost;
+        if let (Some(days), Some(day)) = (cost_by_day.as_deref_mut(), ts.and_then(millis_to_local_date)) {
+            *days.entry(day).or_insert(0.0) += turn_cost;
+        }
+    }
+    cost
 }
 
 /// Splits a Bash command string into the first meaningful token. Drops common
@@ -455,31 +537,11 @@ pub fn scan_detail(id: &str) -> Option<SessionDetail> {
                         .map(str::to_string);
                 }
                 if let Some(u) = msg.and_then(|m| m.get("usage")) {
-                    let turn = TokenUsage {
-                        input: u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                        output: u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                        cache_read: u
-                            .get("cache_read_input_tokens")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0),
-                        cache_creation: u
-                            .get("cache_creation_input_tokens")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0),
-                        cache_creation_1h: u
-                            .get("cache_creation")
-                            .and_then(|c| c.get("ephemeral_1h_input_tokens"))
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0),
-                    };
+                    let turn = turn_usage(u);
                     if let Some(m) = msg.and_then(|m| m.get("model")).and_then(|v| v.as_str()) {
                         cost += pricing::cost_of(m, &turn, Some(ts));
                     }
-                    usage.input += turn.input;
-                    usage.output += turn.output;
-                    usage.cache_read += turn.cache_read;
-                    usage.cache_creation += turn.cache_creation;
-                    usage.cache_creation_1h += turn.cache_creation_1h;
+                    add_usage(&mut usage, &turn);
                 }
                 let blocks = msg
                     .and_then(|m| m.get("content"))
@@ -543,6 +605,13 @@ pub fn scan_detail(id: &str) -> Option<SessionDetail> {
         }
     }
 
+    let subagents = subagent_files(&path);
+    let mut subagent_cost = 0.0_f64;
+    for sub in &subagents {
+        subagent_cost += add_subagent_spend(sub, &mut usage, None);
+    }
+    cost += subagent_cost;
+
     let resolved_id =
         session_id.or_else(|| path.file_stem().map(|s| s.to_string_lossy().to_string()))?;
 
@@ -560,6 +629,8 @@ pub fn scan_detail(id: &str) -> Option<SessionDetail> {
         end_ts: end_ts.unwrap_or(0),
         message_count: messages,
         cost_usd: cost,
+        subagent_count: subagents.len() as u32,
+        subagent_cost_usd: subagent_cost,
         usage,
         first_prompt,
         files_modified,
@@ -783,8 +854,8 @@ pub fn scan_all(cache: &Cache) -> Result<Vec<Session>> {
         return Ok(Vec::new());
     }
 
-    // Collect (path, mtime) for every .jsonl
-    let mut current: Vec<(PathBuf, SystemTime)> = Vec::new();
+    // Collect (path, stamp, subagent files) for every session .jsonl
+    let mut current: Vec<(PathBuf, Stamp, Vec<PathBuf>)> = Vec::new();
     for project_entry in std::fs::read_dir(&root)?.flatten() {
         let project_path = project_entry.path();
         if !project_path.is_dir() {
@@ -799,28 +870,33 @@ pub fn scan_all(cache: &Cache) -> Result<Vec<Session>> {
                 .metadata()
                 .and_then(|m| m.modified())
                 .unwrap_or(SystemTime::UNIX_EPOCH);
-            current.push((p, mtime));
+            let subagents = subagent_files(&p);
+            let newest = subagents
+                .iter()
+                .filter_map(|s| s.metadata().and_then(|m| m.modified()).ok())
+                .fold(mtime, SystemTime::max);
+            current.push((p, (newest, subagents.len()), subagents));
         }
     }
 
     let mut entries = cache.entries.lock().unwrap();
 
     // Evict files no longer present
-    let live: std::collections::HashSet<&PathBuf> = current.iter().map(|(p, _)| p).collect();
+    let live: std::collections::HashSet<&PathBuf> = current.iter().map(|(p, _, _)| p).collect();
     entries.retain(|p, _| live.contains(p));
 
     let mut sessions = Vec::with_capacity(current.len());
-    for (path, mtime) in current {
+    for (path, stamp, subagents) in current {
         let needs_parse = match entries.get(&path) {
-            Some(entry) => entry.mtime != mtime,
+            Some(entry) => entry.stamp != stamp,
             None => true,
         };
         if needs_parse {
-            if let Some(session) = parse_session_file(&path) {
+            if let Some(session) = parse_session_file(&path, &subagents) {
                 entries.insert(
                     path.clone(),
                     CacheEntry {
-                        mtime,
+                        stamp,
                         session: session.clone(),
                     },
                 );
@@ -900,9 +976,11 @@ pub fn costs(sessions: &[Session]) -> CostBreakdown {
     let mut total = 0.0_f64;
     let mut total_tokens: u64 = 0;
     let mut total_messages: u64 = 0;
+    let mut subagent_usd = 0.0_f64;
 
     for s in sessions {
         total += s.cost_usd;
+        subagent_usd += s.subagent_cost_usd;
         let session_tokens = s.usage.input + s.usage.output;
         total_tokens += session_tokens;
         total_messages += s.message_count as u64;
@@ -950,6 +1028,7 @@ pub fn costs(sessions: &[Session]) -> CostBreakdown {
 
     CostBreakdown {
         total_usd: total,
+        subagent_usd,
         total_tokens,
         total_messages,
         by_model,
@@ -1465,6 +1544,61 @@ pub fn tool_stats(sessions: &[Session]) -> ToolStats {
 mod tests {
     use super::*;
 
+    fn assistant_line(ts: &str, model: &str, input: u64, output: u64) -> String {
+        serde_json::json!({
+            "type": "assistant",
+            "timestamp": ts,
+            "sessionId": "parent",
+            "message": {
+                "model": model,
+                "usage": { "input_tokens": input, "output_tokens": output }
+            }
+        })
+        .to_string()
+    }
+
+    /// Subagent transcripts live in `<session-id>/subagents/` and their spend
+    /// must land on the parent session — tokens, cost and day buckets — while
+    /// message and tool counts stay main-thread.
+    #[test]
+    fn subagent_spend_rolls_into_parent_session() {
+        let dir = std::env::temp_dir().join(format!("lunopeak-subagents-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let sub_dir = dir.join("parent").join("subagents");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+
+        let main = dir.join("parent.jsonl");
+        let ts = "2026-10-20T12:00:00.000Z";
+        std::fs::write(&main, assistant_line(ts, "claude-sonnet-5-5", 1_000, 100)).unwrap();
+        std::fs::write(
+            sub_dir.join("agent-a1.jsonl"),
+            [
+                serde_json::json!({ "type": "user", "isSidechain": true, "timestamp": ts }).to_string(),
+                assistant_line(ts, "claude-sonnet-5-5", 2_000, 200),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        std::fs::write(sub_dir.join("agent-a1.meta.json"), "{}").unwrap();
+
+        let subs = subagent_files(&main);
+        assert_eq!(subs.len(), 1, "meta.json must be ignored");
+
+        let alone = parse_session_file(&main, &[]).unwrap();
+        let rolled = parse_session_file(&main, &subs).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(rolled.usage.input, 3_000);
+        assert_eq!(rolled.usage.output, 300);
+        assert_eq!(rolled.message_count, alone.message_count);
+        assert_eq!(rolled.subagent_count, 1);
+        assert!(rolled.subagent_cost_usd > 0.0);
+        assert!((rolled.cost_usd - alone.cost_usd - rolled.subagent_cost_usd).abs() < 1e-9);
+        let day_total: f64 = rolled.cost_by_day.values().sum();
+        assert!((day_total - rolled.cost_usd).abs() < 1e-9);
+        assert!((costs(&[rolled.clone()]).subagent_usd - rolled.subagent_cost_usd).abs() < 1e-9);
+    }
+
     /// A session whose cost lands on multiple days must spread across those
     /// days — not collapse onto its start date. This is the invariant that
     /// keeps the "Today" cost from being smaller than the per-message 5h
@@ -1491,6 +1625,8 @@ mod tests {
             usage: TokenUsage::default(),
             cost_usd: 150.0,
             cost_by_day,
+            subagent_count: 0,
+            subagent_cost_usd: 0.0,
             tool_uses: BTreeMap::new(),
             tool_errors: 0,
             tool_errors_by_name: BTreeMap::new(),

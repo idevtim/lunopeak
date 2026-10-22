@@ -143,7 +143,13 @@ export function SessionReplayView() {
     { value: d.messageCount.toLocaleString(), label: "messages" },
     { value: toolSteps.toLocaleString(), label: "steps" },
     { value: d.filesModified.length.toLocaleString(), label: "files changed" },
-    { value: d.costUsd > 0 ? formatUsd(d.costUsd) : "—", label: `${formatCount(tokens)} tokens` },
+    {
+      value: d.costUsd > 0 ? formatUsd(d.costUsd) : "—",
+      label:
+        d.subagentCount > 0
+          ? `${formatCount(tokens)} tokens, ${formatUsd(d.subagentCostUsd)} by ${plural(d.subagentCount, "subagent")}`
+          : `${formatCount(tokens)} tokens`,
+    },
   ];
 
   return (
