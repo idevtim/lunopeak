@@ -39,7 +39,7 @@ All builds auto-update except Linux RPM (manual). What changed in each version i
 - **Session Replay** — step through any session turn-by-turn
 - **Transcripts** — full-text search across every conversation
 - **Tools** — which tools each session used, how often
-- **Costs** — token spend per session, repo, and provider with budget alerts
+- **Costs** — token spend per session, repo, and provider, subagents included, with budget alerts
 
 ### Code Intelligence
 - **Repos** — every project on your machine with health and AI-usage signals
