@@ -12,6 +12,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
+use rayon::prelude::*;
 
 fn projects_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude").join("projects"))
@@ -19,22 +20,37 @@ fn projects_dir() -> Option<PathBuf> {
 
 // ── Cache ──────────────────────────────────────────────────────────────
 //
-// Parsing the JSONL is the expensive part of every session-related query.
-// We keep a process-lifetime cache keyed by (path, mtime). On each scan we
-// stat every .jsonl in ~/.claude/projects/* — cheap — and only re-parse
-// files whose mtime changed (or were never seen). Files that no longer
-// exist are evicted.
+// Parsing the JSONL is the expensive part of every session-related query —
+// seconds for a few GB of transcripts. We keep a cache keyed by (path,
+// mtime): on each scan we stat every .jsonl in ~/.claude/projects/* — cheap —
+// and only re-parse files whose mtime changed (or were never seen), in
+// parallel. Files that no longer exist are evicted.
+//
+// The cache is persisted to `sessions-cache.json` in the app dir so a cold
+// start (the window *and* the menu-bar agent, which each have their own
+// process) only re-parses what changed since the last run instead of every
+// transcript ever written.
 
 /// Clone is cheap — internally an Arc — so the cache can move into
 /// `spawn_blocking` closures without giving up the shared state.
 #[derive(Default, Clone)]
 pub struct Cache {
-    entries: Arc<Mutex<HashMap<PathBuf, CacheEntry>>>,
+    inner: Arc<Mutex<CacheState>>,
+}
+
+#[derive(Default)]
+struct CacheState {
+    /// Whether the disk cache has been read into `entries` yet. Deferred to
+    /// the first scan so app startup never blocks on it.
+    hydrated: bool,
+    entries: HashMap<PathBuf, CacheEntry>,
 }
 
 struct CacheEntry {
     stamp: Stamp,
-    session: Session,
+    /// `None` for a transcript with no session in it (no timestamps, an
+    /// empty file) — cached too, so it isn't re-read on every scan.
+    session: Option<Session>,
 }
 
 /// Newest mtime across a session's main transcript and its subagent
@@ -42,9 +58,66 @@ struct CacheEntry {
 /// new one spawning) re-parses the parent even if the main file is untouched.
 type Stamp = (SystemTime, usize);
 
+/// Bumped with the app version, so any release that changes what
+/// `parse_session_file` extracts re-parses once instead of serving stale
+/// sessions. Bump the suffix for parser changes made between releases.
+const DISK_CACHE_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "/1");
+
+/// On-disk row: `Session::cost_by_day` is `#[serde(skip)]` (kept off IPC), so
+/// it travels alongside the session rather than inside it.
+type DiskRow = (PathBuf, Stamp, Option<Session>, BTreeMap<NaiveDate, f64>);
+
 impl Cache {
     pub fn new() -> Self {
         Self::default()
+    }
+}
+
+fn disk_cache_file() -> Option<PathBuf> {
+    Some(crate::statusline::app_dir()?.join("sessions-cache.json"))
+}
+
+fn read_disk_cache() -> HashMap<PathBuf, CacheEntry> {
+    let Some(raw) = disk_cache_file().and_then(|p| std::fs::read(p).ok()) else {
+        return HashMap::new();
+    };
+    match serde_json::from_slice::<(String, Vec<DiskRow>)>(&raw) {
+        Ok((version, rows)) if version == DISK_CACHE_VERSION => rows
+            .into_iter()
+            .map(|(path, stamp, mut session, cost_by_day)| {
+                if let Some(s) = session.as_mut() {
+                    s.cost_by_day = cost_by_day;
+                }
+                (path, CacheEntry { stamp, session })
+            })
+            .collect(),
+        _ => HashMap::new(),
+    }
+}
+
+fn write_disk_cache(entries: &HashMap<PathBuf, CacheEntry>) {
+    let Some(path) = disk_cache_file() else {
+        return;
+    };
+    let no_days = BTreeMap::new();
+    let rows: Vec<_> = entries
+        .iter()
+        .map(|(p, e)| {
+            let days = e.session.as_ref().map_or(&no_days, |s| &s.cost_by_day);
+            (p, &e.stamp, &e.session, days)
+        })
+        .collect();
+    let Ok(payload) = serde_json::to_vec(&(DISK_CACHE_VERSION, rows)) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    // Write-then-rename, pid-suffixed: the window and menu-bar processes
+    // share this file, and a reader must never see half of it.
+    let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
+    if std::fs::write(&tmp, payload).is_ok() && std::fs::rename(&tmp, &path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
     }
 }
 
@@ -879,33 +952,43 @@ pub fn scan_all(cache: &Cache) -> Result<Vec<Session>> {
         }
     }
 
-    let mut entries = cache.entries.lock().unwrap();
+    // Held for the whole scan: concurrent first-load queries (dashboard,
+    // costs, sessions, stats) queue behind one parse instead of each
+    // re-parsing every transcript in parallel.
+    let mut state = cache.inner.lock().unwrap();
+    if !state.hydrated {
+        state.entries = read_disk_cache();
+        state.hydrated = true;
+    }
+    let entries = &mut state.entries;
 
     // Evict files no longer present
+    let before = entries.len();
     let live: std::collections::HashSet<&PathBuf> = current.iter().map(|(p, _, _)| p).collect();
     entries.retain(|p, _| live.contains(p));
+    let evicted = entries.len() != before;
 
-    let mut sessions = Vec::with_capacity(current.len());
-    for (path, stamp, subagents) in current {
-        let needs_parse = match entries.get(&path) {
-            Some(entry) => entry.stamp != stamp,
-            None => true,
-        };
-        if needs_parse {
-            if let Some(session) = parse_session_file(&path, &subagents) {
-                entries.insert(
-                    path.clone(),
-                    CacheEntry {
-                        stamp,
-                        session: session.clone(),
-                    },
-                );
-                sessions.push(session);
-            }
-        } else if let Some(entry) = entries.get(&path) {
-            sessions.push(entry.session.clone());
-        }
+    let stale: Vec<&(PathBuf, Stamp, Vec<PathBuf>)> = current
+        .iter()
+        .filter(|(path, stamp, _)| entries.get(path).is_none_or(|e| e.stamp != *stamp))
+        .collect();
+    let parsed: Vec<(PathBuf, CacheEntry)> = stale
+        .par_iter()
+        .map(|(path, stamp, subagents)| {
+            let session = parse_session_file(path, subagents);
+            (path.clone(), CacheEntry { stamp: *stamp, session })
+        })
+        .collect();
+    let changed = evicted || !parsed.is_empty();
+    entries.extend(parsed);
+    if changed {
+        write_disk_cache(entries);
     }
+
+    let mut sessions: Vec<Session> = current
+        .iter()
+        .filter_map(|(path, _, _)| entries.get(path)?.session.clone())
+        .collect();
 
     sessions.sort_by(|a, b| b.end_ts.cmp(&a.end_ts));
     Ok(sessions)
@@ -1644,3 +1727,4 @@ mod tests {
         assert_eq!(buckets[..28].iter().sum::<f64>(), 0.0);
     }
 }
+

@@ -23,7 +23,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use rayon::prelude::*;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -46,26 +47,29 @@ pub fn collect(agents: &AgentSources, force: bool) -> UsageLimits {
     if std::env::var("LUNOPEAK_DEMO").ok().as_deref() == Some("1") {
         return demo_usage_limits();
     }
-    let mut providers = Vec::new();
     // Each provider is gated on its own toggle *before* any request, so turning
     // an agent off stops its sign-in leaving the machine — not just hides the
     // row. The privacy page promises exactly this.
-    if agents.claude_code {
-        if let Some(p) = claude_usage(force) {
-            providers.push(p);
-        }
-    }
-    if let Some(p) = codex_usage(agents.codex) {
-        providers.push(p);
-    }
-    // `cursor_web` is gated separately from `cursor` because the cookie read
-    // triggers an OS Keychain prompt on macOS Chromium browsers — we don't
-    // want that firing unprompted just because Cursor is installed. It also
-    // requires `cursor` itself: the Settings switch greys out when Cursor is
-    // off but keeps its stored value, so honor both here.
-    if let Some(p) = cursor_usage(agents.cursor && agents.cursor_web) {
-        providers.push(p);
-    }
+    //
+    // They run side by side: each can be a network round-trip (and Claude's
+    // also a local JSONL scan), so a cold start would otherwise pay all three
+    // in series before the first card paints.
+    let (claude, codex, cursor) = std::thread::scope(|scope| {
+        let claude = scope.spawn(|| agents.claude_code.then(|| claude_usage(force)).flatten());
+        let codex = scope.spawn(|| codex_usage(agents.codex));
+        // `cursor_web` is gated separately from `cursor` because the cookie read
+        // triggers an OS Keychain prompt on macOS Chromium browsers — we don't
+        // want that firing unprompted just because Cursor is installed. It also
+        // requires `cursor` itself: the Settings switch greys out when Cursor is
+        // off but keeps its stored value, so honor both here.
+        let cursor = scope.spawn(|| cursor_usage(agents.cursor && agents.cursor_web));
+        (
+            claude.join().ok().flatten(),
+            codex.join().ok().flatten(),
+            cursor.join().ok().flatten(),
+        )
+    });
+    let providers = [claude, codex, cursor].into_iter().flatten().collect();
     UsageLimits { providers }
 }
 
@@ -159,6 +163,11 @@ fn claude_usage(force: bool) -> Option<ProviderUsage> {
     // occurred since the last successful fetch.
     let mut newest_mtime: Option<SystemTime> = None;
 
+    // Every in-window transcript, subagent runs included: they bill against
+    // the same limits but live in their own files under
+    // `<session-id>/subagents/`. Each is gated on its own mtime, so a fresh
+    // subagent of an old parent still counts.
+    let mut files: Vec<(PathBuf, SystemTime)> = Vec::new();
     for project in fs::read_dir(&root).ok()?.flatten() {
         let pdir = project.path();
         if !pdir.is_dir() {
@@ -172,11 +181,8 @@ fn claude_usage(force: bool) -> Option<ProviderUsage> {
             if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                 continue;
             }
-            // Subagent runs bill against the same limits but live in their
-            // own transcripts under `<session-id>/subagents/`; each file is
-            // gated on its own mtime, so a fresh subagent of an old parent
-            // still counts.
-            for path in std::iter::once(path.clone()).chain(sessions::subagent_files(&path)) {
+            let subagents = sessions::subagent_files(&path);
+            for path in std::iter::once(path).chain(subagents) {
                 let mtime = fs::metadata(&path)
                     .and_then(|m| m.modified())
                     .unwrap_or(UNIX_EPOCH);
@@ -184,17 +190,49 @@ fn claude_usage(force: bool) -> Option<ProviderUsage> {
                     continue;
                 }
                 newest_mtime = Some(newest_mtime.map_or(mtime, |prev| prev.max(mtime)));
-                scan_claude_file(
-                    &path,
-                    cutoff_5h,
-                    cutoff_7d,
-                    &mut acc_5h,
-                    &mut acc_7d,
-                    &mut acc_7d_by_model,
-                );
+                files.push((path, mtime));
             }
         }
     }
+
+    // Re-read only files whose mtime moved since the last call (in parallel)
+    // — the window and tray poll this every minute, and the in-window set
+    // can run to a GB of JSONL.
+    let mut guard = CLAUDE_TURNS.lock().unwrap();
+    let cache = guard.get_or_insert_with(HashMap::new);
+    let live: std::collections::HashSet<&PathBuf> = files.iter().map(|(p, _)| p).collect();
+    cache.retain(|p, _| live.contains(p));
+    let stale: Vec<&(PathBuf, SystemTime)> = files
+        .iter()
+        .filter(|(p, mtime)| cache.get(p).is_none_or(|(seen, _)| seen != mtime))
+        .collect();
+    let fresh: Vec<_> = stale
+        .par_iter()
+        .map(|(p, mtime)| (p.clone(), (*mtime, read_claude_turns(p, cutoff_7d))))
+        .collect();
+    cache.extend(fresh);
+
+    for (path, _) in &files {
+        let Some((_, turns)) = cache.get(path) else {
+            continue;
+        };
+        for t in turns.iter().filter(|t| t.ts >= cutoff_7d) {
+            let model = t.model.as_deref();
+            acc_7d.record(t.ts, &t.usage, model);
+            if let Some(m) = model {
+                acc_7d_by_model
+                    .entry(m.to_string())
+                    .or_default()
+                    .record(t.ts, &t.usage, model);
+            }
+            if t.ts >= cutoff_5h {
+                acc_5h.record(t.ts, &t.usage, model);
+            }
+        }
+    }
+    // Released before the OAuth fetch below — no reason to hold other
+    // callers on the network.
+    drop(guard);
 
     // The real utilization % comes from Anthropic's OAuth API — they don't
     // persist it locally and there's no token-budget formula we can
@@ -1329,16 +1367,26 @@ struct CacheCreationBlob {
     ephemeral_1h_input_tokens: Option<u64>,
 }
 
-fn scan_claude_file(
-    path: &PathBuf,
-    cutoff_5h: i64,
-    cutoff_7d: i64,
-    acc_5h: &mut WindowAcc,
-    acc_7d: &mut WindowAcc,
-    acc_7d_by_model: &mut HashMap<String, WindowAcc>,
-) {
-    let Ok(file) = File::open(path) else { return };
+/// One billed assistant turn out of a Claude transcript.
+struct ClaudeTurn {
+    ts: i64,
+    model: Option<String>,
+    usage: ClaudeUsageBlob,
+}
+
+/// Per-transcript turns from the last `claude_usage` call, keyed by path and
+/// tagged with the mtime they were read at. Turns that have since aged past
+/// the 7-day cutoff are filtered at fold time; a file whose mtime falls out
+/// of the window is evicted.
+static CLAUDE_TURNS: Mutex<Option<TurnCache>> = Mutex::new(None);
+type TurnCache = HashMap<PathBuf, (SystemTime, Vec<ClaudeTurn>)>;
+
+fn read_claude_turns(path: &Path, cutoff_7d: i64) -> Vec<ClaudeTurn> {
+    let Ok(file) = File::open(path) else {
+        return Vec::new();
+    };
     let reader = BufReader::new(file);
+    let mut turns = Vec::new();
     for line in reader.lines().map_while(Result::ok) {
         if line.is_empty() {
             continue;
@@ -1357,18 +1405,13 @@ fn scan_claude_file(
         }
         let Some(msg) = parsed.message else { continue };
         let Some(usage) = msg.usage else { continue };
-        let model = msg.model.as_deref();
-        acc_7d.record(ts, &usage, model);
-        if let Some(m) = model {
-            acc_7d_by_model
-                .entry(m.to_string())
-                .or_default()
-                .record(ts, &usage, model);
-        }
-        if ts >= cutoff_5h {
-            acc_5h.record(ts, &usage, model);
-        }
+        turns.push(ClaudeTurn {
+            ts,
+            model: msg.model,
+            usage,
+        });
     }
+    turns
 }
 
 fn parse_ts_ms(s: &str) -> Option<i64> {
@@ -2310,3 +2353,4 @@ mod tests {
         );
     }
 }
+

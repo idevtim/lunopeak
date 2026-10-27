@@ -1,6 +1,7 @@
 use crate::models::{BranchInfo, DirtyFile, FileDiff, Repo, RepoStash};
 use crate::process_ext::NoWindow;
 use anyhow::Result;
+use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use uuid::Uuid;
@@ -23,7 +24,7 @@ const SKIP_DIRS: &[&str] = &[
 
 /// Scan the given roots for git repositories. Returns a flat list.
 pub fn scan_roots(roots: &[String]) -> Result<Vec<Repo>> {
-    let mut repos = Vec::new();
+    let mut repo_paths = Vec::new();
     for root in roots {
         let root_path = PathBuf::from(root);
         if !root_path.is_dir() {
@@ -48,14 +49,17 @@ pub fn scan_roots(roots: &[String]) -> Result<Vec<Repo>> {
             let path = entry.path();
             if path.file_name().is_some_and(|n| n == ".git") && path.is_dir() {
                 if let Some(repo_path) = path.parent() {
-                    if let Some(repo) = repo_from_path(repo_path) {
-                        repos.push(repo);
-                    }
+                    repo_paths.push(repo_path.to_path_buf());
                 }
             }
         }
     }
-    Ok(repos)
+    // Each repo shells out to git a couple of times; run them side by side
+    // rather than paying every subprocess round-trip in series.
+    Ok(repo_paths
+        .par_iter()
+        .filter_map(|p| repo_from_path(p))
+        .collect())
 }
 
 fn repo_from_path(path: &Path) -> Option<Repo> {

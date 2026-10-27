@@ -62,7 +62,7 @@ pub const CODEX_ITEMS: [&str; 5] = [
 
 /// Matches Tauri's `app_config_dir()` for our bundle identifier — this code
 /// also runs as a bare CLI with no `AppHandle` to ask.
-fn app_dir() -> Option<PathBuf> {
+pub(crate) fn app_dir() -> Option<PathBuf> {
     Some(dirs::config_dir()?.join("com.lunopeak.app"))
 }
 fn contexts_dir() -> Option<PathBuf> {

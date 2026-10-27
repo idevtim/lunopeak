@@ -1,6 +1,6 @@
 [package]
 name = "lunopeak"
-version = "2.1.0"
+version = "2.1.1"
 description = "Your AI dev environment, at a glance."
 authors = ["iDEVTim"]
 license = "MIT"
@@ -37,7 +37,7 @@ tauri-plugin-window-state = "2"
 window-vibrancy = "0.6"
 
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 thiserror = "2"
