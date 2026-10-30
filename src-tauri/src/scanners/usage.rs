@@ -627,8 +627,10 @@ fn write_claude_creds(creds: &ClaudeCreds) -> Result<(), String> {
 
 /// `security -i`'s line buffer, newline included. Anything longer is split
 /// mid-value, and the first piece is stored.
+#[cfg(any(target_os = "macos", test))]
 const SECURITY_LINE_MAX: usize = 4096;
 
+#[cfg(any(target_os = "macos", test))]
 fn fits_security_stdin(line: &str) -> bool {
     line.len() < SECURITY_LINE_MAX
 }

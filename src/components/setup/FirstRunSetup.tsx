@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { open } from "@tauri-apps/plugin-dialog";
 import { BootSplash } from "@/components/BootSplash";
 import { useBootReady } from "@/hooks/useBootReady";
 import { useInstalledAgents } from "@/hooks/useInstalledAgents";
@@ -191,7 +192,6 @@ function SetupCard({
   const addFolder = isTauri()
     ? async () => {
         try {
-          const { open } = await import("@tauri-apps/plugin-dialog");
           const picked = await open({ directory: true, multiple: false });
           if (typeof picked !== "string" || scan.candidates.includes(picked)) return;
           const current = qc.getQueryData<Settings>(queries.settings.queryKey) ?? settings;
