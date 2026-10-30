@@ -1032,6 +1032,7 @@ mod tests {
             message_count: 0,
             resets_at: None,
             window_seconds: 0,
+            unlimited: false,
         }
     }
 

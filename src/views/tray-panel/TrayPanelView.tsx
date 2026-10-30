@@ -369,7 +369,8 @@ export function limitWindows(p: ProviderUsage): Array<{ scope: string; w: UsageW
       : [];
   }
   return [
-    { scope: "this session", w: p.fiveHour },
+    // Ultra has no 5-hour limit, so there's nothing to warn about.
+    ...(p.fiveHour.unlimited ? [] : [{ scope: "this session", w: p.fiveHour }]),
     { scope: "this week", w: p.weekly },
     ...(p.modelLimits ?? []).map((l) => ({
       scope: `this week's ${l.model} limit`,
@@ -655,14 +656,19 @@ function Meter({
     pct == null
       ? usage.tokens > 0
         ? `${formatCount(usage.tokens)} tokens used`
-        : "No data yet"
+        : usage.unlimited
+          ? "Your plan has no limit here"
+          : "No data yet"
       : resetLabel(usage.resetsAt);
   return (
-    <div title={tooltip} className="flex min-w-0 flex-col gap-1.5">
+    <div
+      title={usage.unlimited ? "Your plan has no limit on this window." : tooltip}
+      className="flex min-w-0 flex-col gap-1.5"
+    >
       <div className="flex items-baseline justify-between gap-2">
         <span className="truncate text-[12px] text-zinc-700 dark:text-zinc-300">{label}</span>
         <span className="text-[13px] font-semibold tabular-nums">
-          {pct != null ? `${pct.toFixed(0)}%` : "—"}
+          {pct != null ? `${pct.toFixed(0)}%` : usage.unlimited ? "No limit" : "—"}
         </span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-black/[0.06] dark:bg-white/[0.05]">

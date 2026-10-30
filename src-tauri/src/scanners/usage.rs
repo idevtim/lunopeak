@@ -89,6 +89,7 @@ fn demo_usage_limits() -> UsageLimits {
                     message_count: 96,
                     resets_at: Some(now + 2 * 60 * 60 + 18 * 60),
                     window_seconds: five_h,
+                    unlimited: false,
                 },
                 weekly: UsageWindow {
                     used_percent: Some(28.0),
@@ -97,6 +98,7 @@ fn demo_usage_limits() -> UsageLimits {
                     message_count: 1_812,
                     resets_at: Some(now + 4 * 24 * 60 * 60),
                     window_seconds: week,
+                    unlimited: false,
                 },
                 notice: None,
                 model_limits: vec![ModelLimit {
@@ -108,6 +110,7 @@ fn demo_usage_limits() -> UsageLimits {
                         message_count: 212,
                         resets_at: Some(now + 4 * 24 * 60 * 60),
                         window_seconds: week,
+                        unlimited: false,
                     },
                     is_active: false,
                 }],
@@ -122,6 +125,7 @@ fn demo_usage_limits() -> UsageLimits {
                     message_count: 24,
                     resets_at: Some(now + 3 * 60 * 60 + 4 * 60),
                     window_seconds: five_h,
+                    unlimited: false,
                 },
                 weekly: UsageWindow {
                     used_percent: Some(22.0),
@@ -130,6 +134,7 @@ fn demo_usage_limits() -> UsageLimits {
                     message_count: 318,
                     resets_at: Some(now + 5 * 24 * 60 * 60),
                     window_seconds: week,
+                    unlimited: false,
                 },
                 notice: None,
                 model_limits: Vec::new(),
@@ -250,8 +255,11 @@ fn claude_usage(force: bool) -> Option<ProviderUsage> {
     let (pct_5h, reset_5h) = fetch
         .usage
         .as_ref()
-        .map(|r| (Some(r.five_hour_pct), r.five_hour_reset))
+        .map(|r| (r.five_hour_pct, r.five_hour_reset))
         .unwrap_or((None, None));
+    // A good fetch with no 5-hour window means the plan has none (verified
+    // Ultra), not that the API is down.
+    let unlimited_5h = fetch.usage.is_some() && pct_5h.is_none();
     let (pct_7d, reset_7d) = fetch
         .usage
         .as_ref()
@@ -274,9 +282,13 @@ fn claude_usage(force: bool) -> Option<ProviderUsage> {
         message_count: acc_5h.messages,
         // Prefer the API-reported reset (authoritative). Fall back to a
         // synthetic estimate from the oldest in-window message so we still
-        // show *something* useful when offline.
-        resets_at: reset_5h.or_else(|| acc_5h.oldest_ts.map(|ts| (ts + FIVE_HOURS_MS) / 1000)),
+        // show *something* useful when offline. No reset without a limit.
+        resets_at: reset_5h.or_else(|| {
+            let oldest = acc_5h.oldest_ts.filter(|_| !unlimited_5h);
+            oldest.map(|ts| (ts + FIVE_HOURS_MS) / 1000)
+        }),
         window_seconds: (FIVE_HOURS_MS / 1000) as u32,
+        unlimited: unlimited_5h,
     };
     let weekly = UsageWindow {
         used_percent: pct_7d,
@@ -285,6 +297,7 @@ fn claude_usage(force: bool) -> Option<ProviderUsage> {
         message_count: acc_7d.messages,
         resets_at: reset_7d.or_else(|| acc_7d.oldest_ts.map(|ts| (ts + SEVEN_DAYS_MS) / 1000)),
         window_seconds: (SEVEN_DAYS_MS / 1000) as u32,
+        unlimited: false,
     };
 
     let model_limits = fetch
@@ -338,6 +351,7 @@ fn scoped_model_limit(l: &RemoteScopedLimit, by_model: &HashMap<String, WindowAc
                 .reset
                 .or_else(|| oldest.map(|ts| (ts + SEVEN_DAYS_MS) / 1000)),
             window_seconds: (SEVEN_DAYS_MS / 1000) as u32,
+            unlimited: false,
         },
         is_active: l.is_active,
     }
@@ -347,7 +361,9 @@ fn scoped_model_limit(l: &RemoteScopedLimit, by_model: &HashMap<String, WindowAc
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RemoteUsage {
-    five_hour_pct: f64,
+    /// None when the response carries no 5-hour window: verified Ultra
+    /// accounts have none.
+    five_hour_pct: Option<f64>,
     five_hour_reset: Option<i64>,
     seven_day_pct: f64,
     seven_day_reset: Option<i64>,
@@ -392,13 +408,20 @@ struct ClaudeOauth {
     expires_at: Option<i64>,
     #[serde(rename = "subscriptionType", skip_serializing_if = "Option::is_none")]
     subscription_type: Option<String>,
+    /// "default_claude_max_5x" | "default_claude_max_20x" | …. The only
+    /// thing that tells Max from Ultra: both report `subscriptionType: "max"`.
+    #[serde(rename = "rateLimitTier", skip_serializing_if = "Option::is_none")]
+    rate_limit_tier: Option<String>,
     #[serde(flatten)]
     extra: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
 struct UsageResponse {
-    five_hour: UsageBucket,
+    /// Absent or null for verified Ultra accounts, which have no 5-hour
+    /// limit. Optional so its absence doesn't fail the weekly read too.
+    #[serde(default)]
+    five_hour: Option<UsageBucket>,
     seven_day: UsageBucket,
     /// Newer, richer view of the same caps. Per-model weekly limits (Fable)
     /// are reported *only* here — the legacy `seven_day_opus` /
@@ -451,10 +474,20 @@ fn claude_oauth_creds() -> Option<(String, Option<String>)> {
         }
     }
 
-    Some((
-        creds.claude_ai_oauth.access_token,
-        creds.claude_ai_oauth.subscription_type,
-    ))
+    let o = creds.claude_ai_oauth;
+    let plan = claude_plan_label(o.subscription_type.as_deref(), o.rate_limit_tier.as_deref());
+    Some((o.access_token, plan))
+}
+
+/// The plan's current name. Anthropic renamed Max 5x → Max and Max 20x →
+/// Ultra (Oct 2026), but credentials still say `subscriptionType: "max"` for
+/// both, so the 20x rate-limit tier is what marks Ultra.
+fn claude_plan_label(subscription: Option<&str>, tier: Option<&str>) -> Option<String> {
+    let sub = subscription.filter(|s| !s.is_empty())?.to_ascii_lowercase();
+    if sub == "max" && tier.is_some_and(|t| t.to_ascii_lowercase().contains("20x")) {
+        return Some("ultra".into());
+    }
+    Some(sub)
 }
 
 fn needs_refresh(o: &ClaudeOauth) -> bool {
@@ -547,10 +580,18 @@ fn read_claude_creds() -> Option<ClaudeCreds> {
 /// the tokens in the process table, where any local process could read them.
 /// `/usr/bin/security` is kept (rather than the Security framework) because
 /// Claude Code's keychain item already trusts it, so no access prompt appears.
+///
+/// `security -i` reads at most 4096 bytes per line and *stores* a longer
+/// value cut short, which corrupts Claude Code's login. The item also holds
+/// MCP OAuth state and easily passes that, so a payload too long for stdin
+/// goes as a hex argv value instead — what Claude Code does itself. That
+/// shows the tokens in the process table for the life of one `security`
+/// call; accepted, since the alternatives are worse: the Security framework
+/// isn't on the item's ACL (a Keychain prompt on every refresh), and skipping
+/// the write strands Claude Code on a refresh token Anthropic just rotated.
 #[cfg(target_os = "macos")]
 fn write_claude_creds(creds: &ClaudeCreds) -> Result<(), String> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
+    use std::process::Command;
     let account = keychain_account().ok_or_else(|| "no acct on keychain entry".to_string())?;
     let payload = serde_json::to_string(creds).map_err(|e| e.to_string())?;
     let line = format!(
@@ -559,6 +600,43 @@ fn write_claude_creds(creds: &ClaudeCreds) -> Result<(), String> {
         security_quote(&account),
         security_quote(&payload),
     );
+    let out = if fits_security_stdin(&line) {
+        run_security_stdin(&line)?
+    } else {
+        Command::new("security")
+            .args(["add-generic-password", "-U", "-s", "Claude Code-credentials", "-a"])
+            .arg(&account)
+            .arg("-X")
+            .arg(hex(payload.as_bytes()))
+            .output()
+            .map_err(|e| e.to_string())?
+    };
+    // Interactive mode exits 0 even when the command fails; it reports the
+    // failure as "<command>: returned <code>" instead.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if !out.status.success() || !stderr.trim().is_empty() || stdout.contains(": returned ") {
+        return Err(format!(
+            "status={:?} output={}",
+            out.status.code(),
+            format!("{} {}", stdout.trim(), stderr.trim()).trim()
+        ));
+    }
+    Ok(())
+}
+
+/// `security -i`'s line buffer, newline included. Anything longer is split
+/// mid-value, and the first piece is stored.
+const SECURITY_LINE_MAX: usize = 4096;
+
+fn fits_security_stdin(line: &str) -> bool {
+    line.len() < SECURITY_LINE_MAX
+}
+
+#[cfg(target_os = "macos")]
+fn run_security_stdin(line: &str) -> Result<std::process::Output, String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
     let mut child = Command::new("security")
         .arg("-i")
         .stdin(Stdio::piped())
@@ -572,19 +650,12 @@ fn write_claude_creds(creds: &ClaudeCreds) -> Result<(), String> {
         .ok_or_else(|| "security stdin unavailable".to_string())?
         .write_all(line.as_bytes())
         .map_err(|e| e.to_string())?;
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    // Interactive mode exits 0 even when the command fails; it reports the
-    // failure as "<command>: returned <code>" instead.
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    if !out.status.success() || !stderr.trim().is_empty() || stdout.contains(": returned ") {
-        return Err(format!(
-            "status={:?} output={}",
-            out.status.code(),
-            format!("{} {}", stdout.trim(), stderr.trim()).trim()
-        ));
-    }
-    Ok(())
+    child.wait_with_output().map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Quotes one argument for `security -i`'s command line: wrapped in double
@@ -1224,8 +1295,12 @@ fn claude_remote_usage(
         }
     };
     let usage = RemoteUsage {
-        five_hour_pct: body.five_hour.utilization,
-        five_hour_reset: body.five_hour.resets_at.as_deref().and_then(parse_iso_secs),
+        five_hour_pct: body.five_hour.as_ref().map(|b| b.utilization),
+        five_hour_reset: body
+            .five_hour
+            .as_ref()
+            .and_then(|b| b.resets_at.as_deref())
+            .and_then(parse_iso_secs),
         seven_day_pct: body.seven_day.utilization,
         seven_day_reset: body.seven_day.resets_at.as_deref().and_then(parse_iso_secs),
         scoped: parse_scoped_limits(&body.limits),
@@ -1462,6 +1537,7 @@ fn codex_provider(
             message_count: 0,
             resets_at: fresh.and_then(|w| w.resets_at),
             window_seconds,
+            unlimited: false,
         }
     };
     ProviderUsage {
@@ -1841,6 +1917,7 @@ pub(crate) fn cursor_usage(web_enabled: bool) -> Option<ProviderUsage> {
                 message_count: active_count,
                 resets_at: snap.billing_cycle_end_unix,
                 window_seconds: cursor_web::window_seconds_for(snap.billing_cycle_end_unix),
+                unlimited: false,
             };
             // On-demand spend % only makes sense when a cap is set. With no
             // cap we still report the dollar amount via `cost_usd` so the UI
@@ -1859,6 +1936,7 @@ pub(crate) fn cursor_usage(web_enabled: bool) -> Option<ProviderUsage> {
                 message_count: 0,
                 resets_at: snap.billing_cycle_end_unix,
                 window_seconds: cursor_web::window_seconds_for(snap.billing_cycle_end_unix),
+                unlimited: false,
             };
             let plan_label = snap.membership_type.or(plan);
             (plan_window, on_demand_window, plan_label)
@@ -1875,6 +1953,7 @@ pub(crate) fn cursor_usage(web_enabled: bool) -> Option<ProviderUsage> {
                 // to any reset countdown when resets_at is None, so this is
                 // purely informational.
                 window_seconds: 24 * 60 * 60,
+                unlimited: false,
             };
             // No weekly equivalent; leave it as a no-data window so the
             // frontend can render Cursor as a single-bar provider.
@@ -1885,6 +1964,7 @@ pub(crate) fn cursor_usage(web_enabled: bool) -> Option<ProviderUsage> {
                 message_count: 0,
                 resets_at: None,
                 window_seconds: 7 * 24 * 60 * 60,
+                unlimited: false,
             };
             // Borrow the membership label from the web snapshot when we have
             // one — it's more authoritative than the cached SQLite value.
@@ -2053,7 +2133,7 @@ mod tests {
 
     fn usage(reset_in: i64) -> RemoteUsage {
         RemoteUsage {
-            five_hour_pct: 42.0,
+            five_hour_pct: Some(42.0),
             five_hour_reset: Some(NOW + reset_in),
             seven_day_pct: 11.0,
             seven_day_reset: Some(NOW + 3 * 24 * 60 * 60),
@@ -2114,6 +2194,41 @@ mod tests {
         )
         .unwrap();
         assert!(parse_scoped_limits(&body.limits).is_empty());
+    }
+
+    #[test]
+    fn response_without_five_hour_still_parses() {
+        // Verified Ultra accounts have no 5-hour limit; the weekly read
+        // must survive the bucket going missing or null.
+        for json in [
+            r#"{ "seven_day": { "utilization": 2.0, "resets_at": null } }"#,
+            r#"{ "five_hour": null, "seven_day": { "utilization": 2.0, "resets_at": null } }"#,
+        ] {
+            let body: UsageResponse = serde_json::from_str(json).unwrap();
+            assert!(body.five_hour.is_none());
+            assert_eq!(body.seven_day.utilization, 2.0);
+        }
+    }
+
+    #[test]
+    fn long_keychain_payload_skips_security_stdin() {
+        // 4095 bytes plus the newline is the most `security -i` reads
+        // whole; past that it stores a truncated value.
+        assert!(fits_security_stdin(&format!("{}\n", "a".repeat(4094))));
+        assert!(!fits_security_stdin(&format!("{}\n", "a".repeat(4095))));
+        assert!(!fits_security_stdin(&"a".repeat(9_000)));
+    }
+
+    #[test]
+    fn claude_plan_label_names_ultra_from_the_20x_tier() {
+        let label = |s, t| claude_plan_label(s, t);
+        assert_eq!(label(Some("max"), Some("default_claude_max_20x")).as_deref(), Some("ultra"));
+        assert_eq!(label(Some("max"), Some("default_claude_max_5x")).as_deref(), Some("max"));
+        assert_eq!(label(Some("max"), None).as_deref(), Some("max"));
+        assert_eq!(label(Some("ultra"), None).as_deref(), Some("ultra"));
+        assert_eq!(label(Some("Pro"), Some("default_claude_pro")).as_deref(), Some("pro"));
+        assert_eq!(label(Some(""), None), None);
+        assert_eq!(label(None, Some("default_claude_max_20x")), None);
     }
 
     #[test]

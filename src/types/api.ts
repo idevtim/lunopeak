@@ -817,6 +817,11 @@ export interface UsageWindow {
   resetsAt: number | null;
   /** Window length in seconds. */
   windowSeconds: number;
+  /**
+   * The plan has no cap on this window (Claude Ultra's 5-hour window, once
+   * the account is verified). Usage still accrues; there's no % to fill.
+   */
+  unlimited?: boolean;
 }
 
 export type UsageProvider = "claude" | "codex" | "cursor";

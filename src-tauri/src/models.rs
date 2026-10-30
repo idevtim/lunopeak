@@ -1335,6 +1335,11 @@ pub struct UsageWindow {
     pub resets_at: Option<i64>,
     /// Window length in seconds (300*60 for 5h, 7*24*3600 for weekly).
     pub window_seconds: u32,
+    /// The plan has no cap on this window (Claude Ultra's 5-hour window,
+    /// once the account is verified). Usage still accrues; there's no % to
+    /// fill, so the UI says "No limit" rather than "—".
+    #[serde(default)]
+    pub unlimited: bool,
 }
 
 /// A weekly cap scoped to one model family (today: Fable), reported by

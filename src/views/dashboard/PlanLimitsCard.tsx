@@ -154,14 +154,19 @@ function Meter({
     pct == null
       ? usage.tokens > 0
         ? `${formatCount(usage.tokens)} tokens used`
-        : "No data yet"
+        : usage.unlimited
+          ? "Your plan has no limit here"
+          : "No data yet"
       : resetLabel(usage.resetsAt);
   return (
-    <div title={tooltip} className="flex min-w-0 flex-col gap-1.5">
+    <div
+      title={usage.unlimited ? "Your plan has no limit on this window." : tooltip}
+      className="flex min-w-0 flex-col gap-1.5"
+    >
       <div className="flex justify-between gap-2 text-[12.5px]">
         <span className="truncate text-zinc-700 dark:text-zinc-300">{label}</span>
         <span className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-          {pct != null ? `${Math.round(pct)}%` : "—"}
+          {pct != null ? `${Math.round(pct)}%` : usage.unlimited ? "No limit" : "—"}
         </span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-black/[0.06] dark:bg-white/[0.06]">
