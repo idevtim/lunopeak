@@ -39,6 +39,19 @@ const FABLE_5_1: Price = Price {
     cache_creation_1h: 20.0,
 };
 
+// Fable 5.2 and Mythos 5.2 succeed the 5.1 pair at a lower price: $8 / $40
+// per 1M, 5m write $10 (1.25×), 1h write $16 (2×), and cache reads at $0.20 —
+// the same 0.025× input ratio as 5.1, so they report a cache-read saving too.
+// Flat across the full 1M context. Verified against the pricing page on
+// 2026-11-09.
+const FABLE_5_2: Price = Price {
+    input: 8.0,
+    output: 40.0,
+    cache_read: 0.20,
+    cache_creation: 10.0,
+    cache_creation_1h: 16.0,
+};
+
 // Opus 4.5–4.8 and Opus 5 list pricing: $5 / $25 per 1M (cache hit 0.1×, 5m
 // write 1.25×, 1h write 2×). Flat across the full context window: Anthropic
 // bills every Claude 4.6+ model's 1M context at standard rates, and Opus 4.5
@@ -186,13 +199,24 @@ fn is_mythos_5_1(m: &str) -> bool {
     m.contains("mythos-5-1") || m.contains("mythos-5.1")
 }
 
+/// Fable 5.2 or Mythos 5.2 (any snapshot) — they share a price. Matched on
+/// the full `-5-2` suffix so plain `fable-5` / `mythos-5` can't be mistaken
+/// for it; the dotted form covers display round-trips ("claude-fable-5.2").
+fn is_fable_or_mythos_5_2(m: &str) -> bool {
+    ["fable-5-2", "fable-5.2", "mythos-5-2", "mythos-5.2"]
+        .iter()
+        .any(|v| m.contains(v))
+}
+
 fn lookup(m: &str) -> Price {
     // The Mythos line (Project Glasswing) is the Fable tier under a different
-    // name — Mythos 5 mirrors Fable 5 and Mythos 5.1 mirrors Fable 5.1 — so
+    // name — Mythos 5 / 5.1 / 5.2 mirror Fable 5 / 5.1 / 5.2 — so
     // both slugs resolve here rather than falling through to the Sonnet
     // default, which would under-report them by more than 3×.
     if m.contains("fable") || m.contains("mythos") {
-        if is_fable_5_1(m) || is_mythos_5_1(m) {
+        if is_fable_or_mythos_5_2(m) {
+            FABLE_5_2
+        } else if is_fable_5_1(m) || is_mythos_5_1(m) {
             FABLE_5_1
         } else {
             FABLE
@@ -257,8 +281,9 @@ pub fn cost_of(model: &str, usage: &TokenUsage, _ts_millis: Option<i64>) -> f64 
 /// 0.1× rate for its tier. Returns 0.0 for every model that doesn't carry a
 /// discount, so callers can total it unconditionally.
 ///
-/// Today three models qualify: Fable 5.1 and Mythos 5.1 ($0.25 per 1M against
-/// the $1.00 standard for their tier) and Opus 5.5 ($0.20 against $0.40).
+/// Today five models qualify: Fable 5.2 and Mythos 5.2 ($0.20 per 1M against
+/// the $0.80 standard for their tier), Fable 5.1 and Mythos 5.1 ($0.25 against
+/// $1.00), and Opus 5.5 ($0.20 against $0.40).
 /// Keeping the comparison in this module means the UI never has to hard-code
 /// a rate to describe the saving.
 pub fn cache_read_savings_usd(model: &str, cache_read_tokens: u64) -> f64 {
@@ -651,6 +676,27 @@ mod tests {
     }
 
     #[test]
+    fn fable_and_mythos_5_2_rates() {
+        // $8 / $40 per 1M, for both names.
+        for id in ["claude-fable-5-2", "claude-mythos-5-2"] {
+            approx(cost_of(id, &usage(1_000_000, 1_000_000, 0, 0, 0), None), 48.0);
+            // Cache read $0.20 (0.025×), 5m write $10, 1h write $16.
+            approx(cost_of(id, &usage(0, 0, 1_000_000, 0, 0), None), 0.20);
+            approx(cost_of(id, &usage(0, 0, 0, 1_000_000, 0), None), 10.0);
+            approx(cost_of(id, &usage(0, 0, 0, 1_000_000, 1_000_000), None), 16.0);
+            // Flat above 200k.
+            approx(cost_of(id, &usage(300_000, 0, 0, 0, 0), None), 2.4);
+        }
+        // Dotted slugs resolve the same.
+        approx(cost_of("claude-fable-5.2", &usage(1_000_000, 0, 0, 0, 0), None), 8.0);
+        approx(cost_of("claude-mythos-5.2", &usage(1_000_000, 0, 0, 0, 0), None), 8.0);
+        // 5.2 must not swallow 5 / 5.1, nor they it.
+        approx(cost_of("claude-fable-5-1", &usage(1_000_000, 0, 0, 0, 0), None), 10.0);
+        approx(cost_of("claude-fable-5", &usage(1_000_000, 0, 0, 0, 0), None), 10.0);
+        approx(cost_of("claude-mythos-5", &usage(1_000_000, 0, 0, 0, 0), None), 10.0);
+    }
+
+    #[test]
     fn mythos_bills_at_the_fable_tier() {
         // Mythos is the Fable tier under another name — it must not fall
         // through to the Sonnet default ($3 / $15), which would under-report
@@ -689,6 +735,9 @@ mod tests {
         approx(cache_read_savings_usd("claude-fable-5-1", 0), 0.0);
         // Mythos 5.1 matches Fable 5.1.
         approx(cache_read_savings_usd("claude-mythos-5-1", 1_000_000), 0.75);
+        // Fable / Mythos 5.2: $0.80 - $0.20 = $0.60 saved per 1M cached tokens.
+        approx(cache_read_savings_usd("claude-fable-5-2", 1_000_000), 0.60);
+        approx(cache_read_savings_usd("claude-mythos-5-2", 1_000_000), 0.60);
         // Opus 5.5: $0.40 - $0.20 = $0.20 saved per 1M cached tokens.
         approx(cache_read_savings_usd("claude-opus-5-5", 1_000_000), 0.20);
         // Everything else prices cache reads at the standard 0.1×, so there

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useBootReady } from "@/hooks/useBootReady";
+import { SPLASH_MIN_MS, SPLASH_WARM_MS } from "@/lib/boot";
+import { restoredFromSnapshot } from "@/lib/queryPersist";
 import { cn } from "@/lib/utils";
 
 const FADE_MS = 250;
@@ -10,7 +12,9 @@ const FADE_MS = 250;
  * pre-React splash's timeline.
  */
 export function BootSplash({ replay = false }: { replay?: boolean }) {
-  const ready = useBootReady();
+  // Full splash on a cold start or a replay; a short one when Home already has
+  // last-known numbers to paint.
+  const ready = useBootReady(!replay && restoredFromSnapshot() ? SPLASH_WARM_MS : SPLASH_MIN_MS);
   const [mounted, setMounted] = useState(true);
 
   // The pre-React splash sits underneath this overlay. Remove it once we've

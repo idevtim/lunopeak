@@ -240,7 +240,7 @@ export interface ModelUsage {
   /**
    * USD saved by this model's discounted cache-read rate versus the standard
    * 0.1x rate for its tier. Zero unless the model carries such a discount —
-   * today Fable 5.1, Mythos 5.1 and Opus 5.5 do.
+   * today Fable 5.1 / 5.2, Mythos 5.1 / 5.2 and Opus 5.5 do.
    */
   cacheReadSavingsUsd: number;
 }

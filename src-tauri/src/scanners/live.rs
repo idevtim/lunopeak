@@ -564,6 +564,8 @@ mod tests {
         assert_eq!(claude_context_window("claude-sonnet-4-5", 50_000), 200_000);
         assert_eq!(claude_context_window("claude-opus-5-5", 50_000), 1_000_000);
         assert_eq!(claude_context_window("claude-fable-5-1", 50_000), 1_000_000);
+        assert_eq!(claude_context_window("claude-fable-5-2", 50_000), 1_000_000);
+        assert_eq!(claude_context_window("claude-mythos-5-2", 50_000), 1_000_000);
         assert_eq!(claude_context_window("claude-sonnet-5", 50_000), 1_000_000);
         assert_eq!(claude_context_window("claude-sonnet-5-5", 50_000), 1_000_000);
         assert_eq!(claude_context_window("claude-sonnet-4-6", 50_000), 1_000_000);

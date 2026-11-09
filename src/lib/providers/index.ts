@@ -71,7 +71,8 @@ export const PROVIDER_MODELS: Record<AssistantProvider, readonly ProviderModel[]
     { id: "claude-opus-5-5", label: "Opus 5.5" },
     { id: "claude-fable-5", label: "Fable 5" },
     { id: "claude-fable-5-1", label: "Fable 5.1" },
-    // Mythos 5.1 is priced and tracked in Costs, but stays out of this picker:
+    { id: "claude-fable-5-2", label: "Fable 5.2" },
+    // Mythos 5.1 / 5.2 are priced and tracked in Costs, but stay out of this picker:
     // it's reachable only through Project Glasswing, so listing it would offer
     // most users a model their key can't call.
   ],

@@ -594,7 +594,7 @@ pub struct ModelUsage {
     pub cache_read_tokens: u64,
     /// USD this model's discounted cache-read rate saved versus the standard
     /// 0.1× rate for its tier. Zero for every model without such a discount —
-    /// today Fable 5.1, Mythos 5.1 and Opus 5.5 carry one. See `pricing::cache_read_savings_usd`.
+    /// today Fable 5.1 / 5.2, Mythos 5.1 / 5.2 and Opus 5.5 carry one. See `pricing::cache_read_savings_usd`.
     pub cache_read_savings_usd: f64,
 }
 
