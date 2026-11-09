@@ -138,7 +138,7 @@ function thirtyDayActivity(seed: number): number[] {
 const MODELS = [
   "claude-opus-5-5",
   "claude-opus-5",
-  "claude-fable-5-1",
+  "claude-fable-5-2",
   "claude-sonnet-5",
   "claude-sonnet-4-6",
   "gpt-5-codex",
@@ -221,11 +221,11 @@ export const sessionStats: SessionStats = {
   hourHistogram: HOUR_HISTOGRAM,
   dayHistogram: DAY_HISTOGRAM_84,
   byModel: [
-    // cacheReadSavingsUsd is $0.75 per 1M cached tokens on Fable 5.1 and
+    // cacheReadSavingsUsd is $0.60 per 1M cached tokens on Fable 5.2 and
     // $0.20 per 1M on Opus 5.5; zero everywhere else.
     { model: "claude-opus-5",      sessions: 40, costUsd:  46.00, tokens:  9_000_000, cacheReadTokens: 7_400_000, cacheReadSavingsUsd: 0 },
     { model: "claude-opus-5-5",    sessions: 24, costUsd:  22.00, tokens:  5_200_000, cacheReadTokens: 4_100_000, cacheReadSavingsUsd: 0.82 },
-    { model: "claude-fable-5-1",   sessions: 12, costUsd:  63.10, tokens:  2_900_000, cacheReadTokens: 4_600_000, cacheReadSavingsUsd: 3.45 },
+    { model: "claude-fable-5-2",   sessions: 12, costUsd:  50.48, tokens:  2_900_000, cacheReadTokens: 4_600_000, cacheReadSavingsUsd: 2.76 },
     { model: "claude-sonnet-5",    sessions: 31, costUsd:  45.80, tokens:  5_800_000, cacheReadTokens: 3_500_000, cacheReadSavingsUsd: 0 },
     { model: "claude-sonnet-4-6",  sessions: 17, costUsd:  24.40, tokens:  3_100_000, cacheReadTokens: 2_200_000, cacheReadSavingsUsd: 0 },
     { model: "gpt-5-codex",        sessions: 22, costUsd:  34.50, tokens:  2_700_000, cacheReadTokens: 900_000, cacheReadSavingsUsd: 0 },

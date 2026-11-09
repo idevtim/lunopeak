@@ -512,7 +512,7 @@ function ModelsCard({ byModel }: { byModel: ModelUsage[] }) {
 }
 
 /**
- * Fable 5.1 / Mythos 5.1 and Opus 5.5 bill cache reads below the standard
+ * Fable / Mythos 5.1 and 5.2 and Opus 5.5 bill cache reads below the standard
  * 0.1× of input. The dollar figure comes from the Rust pricing module and is
  * already reflected in the totals — this just names it.
  */

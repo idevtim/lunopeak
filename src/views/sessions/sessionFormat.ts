@@ -3,9 +3,11 @@ import type { Session, SessionDetail, SessionEvent } from "@/types/api";
 /** "claude-opus-4-7-20250101" → "Opus 4.7". Falls back to the raw id. */
 export function friendlyModel(model: string): string {
   const m = model.toLowerCase();
+  if (/fable-?5[-.]2/.test(m)) return "Fable 5.2";
   if (/fable-?5[-.]1/.test(m)) return "Fable 5.1";
   if (/fable-?5/.test(m)) return "Fable 5";
   if (/fable/.test(m)) return "Fable";
+  if (/mythos-?5[-.]2/.test(m)) return "Mythos 5.2";
   if (/mythos-?5[-.]1/.test(m)) return "Mythos 5.1";
   if (/mythos-?5/.test(m)) return "Mythos 5";
   if (/mythos/.test(m)) return "Mythos";

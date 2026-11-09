@@ -6,6 +6,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { applyPlatformAttribute } from "./hooks/usePlatform";
 import { resolveTheme } from "./hooks/useTheme";
 import { prefetchOnBoot } from "./lib/queries";
+import { persistQuerySnapshot, restoreQuerySnapshot } from "./lib/queryPersist";
 import { useFixtures } from "./lib/tauri";
 import { demoConversations, demoCurrentConversationId } from "./lib/demoFixtures";
 import { useAssistantStore } from "./stores/assistantStore";
@@ -82,6 +83,14 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+// Seed Home with the last-known numbers so it paints at once on relaunch;
+// everything restored is stale and refetches below. Skipped in demo mode so
+// fixtures never land in the snapshot.
+if (!useFixtures()) {
+  restoreQuerySnapshot(queryClient);
+  persistQuerySnapshot(queryClient);
+}
 
 // Kick off prefetch immediately so the Rust scanners run while the splash
 // animates. By the time the splash fades, hot queries are already cached

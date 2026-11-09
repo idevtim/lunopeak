@@ -11,10 +11,10 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/tauri";
 import { queries } from "@/lib/queries";
-import { useDelayedLoading } from "@/hooks/useDelayedLoading";
 import { useOnline } from "@/hooks/useOnline";
 import { Card, Page, PageHeader } from "@/components/ui/Page";
-import { StatCard } from "@/components/ui/StatCard";
+import { StatCard, StatCardSkeleton } from "@/components/ui/StatCard";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { Button } from "@/components/ui/Button";
 import { EmptyState, ErrorState } from "@/components/ui/PageStates";
 import { Pill } from "@/components/ui/Pill";
@@ -40,7 +40,6 @@ import {
   resetSentence,
 } from "@/views/tray-panel/TrayPanelView";
 import { SESSION_STATE_LABEL, basename, sessionState, type SessionState } from "@/views/live/describe";
-import { DashboardSkeleton } from "./DashboardSkeleton";
 import { SwapGrid, type SwapGridItem } from "./SwapGrid";
 import { PlanLimitsCard } from "./PlanLimitsCard";
 import { AttentionCard, type AttentionItem } from "./AttentionCard";
@@ -127,9 +126,9 @@ export function DashboardView() {
   const [editing, setEditing] = useState(false);
   const [resetKey, setResetKey] = useState(0);
 
-  const showSkeleton = useDelayedLoading(summary.isLoading || repos.isLoading);
-  if (showSkeleton) return <DashboardSkeleton />;
-
+  // No whole-page gate: the header and every card paint at once, and each
+  // section shows its own skeleton until its query lands (or until a restored
+  // snapshot is refreshed — see lib/queryPersist).
   if (summary.isError && repos.isError) {
     return (
       <Page>
@@ -147,19 +146,13 @@ export function DashboardView() {
     );
   }
 
-  const data = summary.data ?? {
-    totalRepos: 0,
-    activeSessions: 0,
-    totalCostUsd: 0,
-    uncommittedRepos: 0,
-    activity30d: Array(30).fill(0) as number[],
-  };
   const allRepos = repos.data ?? [];
+  const totalRepos = repos.data?.length ?? summary.data?.totalRepos;
 
   const firstName = firstNameFrom(username.data);
   const title = `${greetingFor(new Date().getHours())}${firstName ? `, ${firstName}` : ""}`;
 
-  if (settings.data && settings.data.scanDirs.length === 0 && data.totalRepos === 0) {
+  if (settings.data && settings.data.scanDirs.length === 0 && totalRepos === 0) {
     return (
       <Page>
         <PageHeader title={title} />
@@ -176,7 +169,9 @@ export function DashboardView() {
   const now = Date.now();
   const contexts = liveContexts.data ?? [];
   const states = contexts.map((c) => sessionState({ status: c.status, lastTs: c.lastTs, now }));
-  const agents = activeProcesses.data?.length ?? data.activeSessions;
+  // Live process count only — never the summary's figure, which can come from
+  // a restored snapshot and would read as agents running right now.
+  const agents = activeProcesses.data?.length;
   const working = states.filter((s) => s === "working").length;
   const waiting = states.filter((s) => s === "waiting").length;
 
@@ -242,8 +237,8 @@ export function DashboardView() {
             <span>
               {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
             </span>
-            <span className="text-zinc-300 dark:text-zinc-600">·</span>
-            {agents > 0 ? (
+            {agents !== undefined && <span className="text-zinc-300 dark:text-zinc-600">·</span>}
+            {agents === undefined ? null : agents > 0 ? (
               <span className="inline-flex items-center gap-1.5 font-medium text-emerald-700 dark:text-emerald-400">
                 <span className="size-[7px] rounded-full bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.18)]" />
                 {plural(agents, "agent")} working
@@ -282,43 +277,71 @@ export function DashboardView() {
         />
       )}
 
-      <AttentionCard items={attention} />
+      {/* Repo hygiene feeds this list; until repos land, "Nothing right now"
+          would be a guess, so hold the slot instead. */}
+      {attention.length === 0 && !repos.data && !repos.isError ? (
+        <Skeleton className="h-[46px] w-full rounded-[14px]" />
+      ) : (
+        <AttentionCard items={attention} />
+      )}
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard
-          label="Agents working"
-          value={agents}
-          to="#/live"
-          hint={
-            [working > 0 && `${working} busy`, waiting > 0 && `${waiting} waiting for you`]
-              .filter(Boolean)
-              .join(", ") || (agents > 0 ? "All quiet right now" : "Nothing running right now")
-          }
-        />
-        <StatCard
-          label="Spent today"
-          value={costs.data ? formatUsd(costToday) : "—"}
-          to="#/costs"
-          hint={typical != null ? `A typical day is about ${aboutUsd(typical)}` : "Not enough history for a typical day yet"}
-        />
-        <StatCard
-          label="Spent this month"
-          value={costs.data ? aboutUsd(Math.max(0, costThisMonth)) : "—"}
-          to="#/costs"
-          hint={
-            monthlyBudget > 0 ? (
-              <BudgetBar spent={costThisMonth} budget={monthlyBudget} alertPct={alertPct} />
-            ) : (
-              "No monthly budget set"
-            )
-          }
-        />
-        <StatCard
-          label="Repos tracked"
-          value={data.totalRepos}
-          to="#/repos"
-          hint={lastChange != null ? `Last change ${formatRelativeTime(lastChange)}` : "No changes yet"}
-        />
+        {agents === undefined ? (
+          <StatCardSkeleton />
+        ) : (
+          <StatCard
+            label="Agents working"
+            value={agents}
+            to="#/live"
+            hint={
+              [working > 0 && `${working} busy`, waiting > 0 && `${waiting} waiting for you`]
+                .filter(Boolean)
+                .join(", ") || (agents > 0 ? "All quiet right now" : "Nothing running right now")
+            }
+          />
+        )}
+        {costs.data ? (
+          <StatCard
+            label="Spent today"
+            value={formatUsd(costToday)}
+            to="#/costs"
+            hint={typical != null ? `A typical day is about ${aboutUsd(typical)}` : "Not enough history for a typical day yet"}
+          />
+        ) : costs.isError ? (
+          <StatCard label="Spent today" value="—" to="#/costs" hint="Couldn't read your spending" />
+        ) : (
+          <StatCardSkeleton />
+        )}
+        {costs.data ? (
+          <StatCard
+            label="Spent this month"
+            value={aboutUsd(Math.max(0, costThisMonth))}
+            to="#/costs"
+            hint={
+              monthlyBudget > 0 ? (
+                <BudgetBar spent={costThisMonth} budget={monthlyBudget} alertPct={alertPct} />
+              ) : (
+                "No monthly budget set"
+              )
+            }
+          />
+        ) : costs.isError ? (
+          <StatCard label="Spent this month" value="—" to="#/costs" hint="Couldn't read your spending" />
+        ) : (
+          <StatCardSkeleton />
+        )}
+        {totalRepos !== undefined ? (
+          <StatCard
+            label="Repos tracked"
+            value={totalRepos}
+            to="#/repos"
+            hint={lastChange != null ? `Last change ${formatRelativeTime(lastChange)}` : "No changes yet"}
+          />
+        ) : repos.isError && summary.isError ? (
+          <StatCard label="Repos tracked" value="—" to="#/repos" hint="Couldn't scan your folders" />
+        ) : (
+          <StatCardSkeleton />
+        )}
       </div>
 
       <SwapGrid
@@ -333,7 +356,11 @@ export function DashboardView() {
         ] satisfies SwapGridItem[]}
       />
 
-      <ActivityCard activity={data.activity30d} />
+      {summary.data ? (
+        <ActivityCard activity={summary.data.activity30d} />
+      ) : summary.isError ? null : (
+        <ActivityCardSkeleton />
+      )}
 
       <SwapGrid
         editing={editing}
@@ -345,7 +372,7 @@ export function DashboardView() {
           {
             id: "sessions",
             node: (
-              <ListCard title="Recent sessions" href="#/sessions" empty="No sessions yet.">
+              <ListCard title="Recent sessions" href="#/sessions" empty="No sessions yet." loading={!sessions.data && !sessions.isError}>
                 {(sessions.data ?? []).slice(0, 4).map((s) => (
                   <ListRow key={s.id}>
                     <div className="flex min-w-0 flex-1 flex-col gap-px">
@@ -376,6 +403,7 @@ export function DashboardView() {
                 title="Recently active repos"
                 href="#/repos"
                 empty="No tracked repos yet. Add a project folder in Settings."
+                loading={!repos.data && !repos.isError}
               >
                 {allRepos
                   .filter((r) => r.lastActivityTs != null)
@@ -401,7 +429,7 @@ export function DashboardView() {
           {
             id: "ports",
             node: (
-              <ListCard title="Open ports" href="#/ports" empty="No listening ports right now.">
+              <ListCard title="Open ports" href="#/ports" empty="No listening ports right now." loading={!ports.data && !ports.isError}>
                 {(ports.data ?? [])
                   .slice()
                   .sort((a, b) => a.port - b.port)
@@ -648,6 +676,24 @@ function ActivityCard({ activity }: { activity: number[] }) {
   );
 }
 
+/** Same frame as ActivityCard, with the stats and bars blocked out. */
+function ActivityCardSkeleton() {
+  return (
+    <Card className="flex flex-col gap-3.5 px-[18px] pb-4 pt-3.5">
+      <div className="flex items-baseline gap-5">
+        <div className="flex flex-1 flex-col gap-0.5">
+          <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Activity</span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">Sessions and commits per day, last 30 days</span>
+        </div>
+        <Skeleton className="h-9 w-12" />
+        <Skeleton className="h-9 w-14" />
+      </div>
+      <Skeleton className="h-[130px] w-full" />
+      <div className="h-[15px]" />
+    </Card>
+  );
+}
+
 function ActivityStat({ value, label, className }: { value: string; label: string; className?: string }) {
   return (
     <div className="flex flex-col items-end">
@@ -722,11 +768,14 @@ function ListCard({
   title,
   href,
   empty,
+  loading = false,
   children,
 }: {
   title: string;
   href: string;
   empty: string;
+  /** No data yet: show placeholder rows instead of the empty message. */
+  loading?: boolean;
   children: ReactNode[];
 }) {
   return (
@@ -737,7 +786,17 @@ function ListCard({
           See all
         </a>
       </div>
-      {children.length === 0 ? (
+      {loading ? (
+        Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="flex items-center gap-2.5 px-2 py-[7px]">
+            <div className="flex flex-1 flex-col gap-1.5">
+              <Skeleton className="h-3 w-3/5" />
+              <Skeleton className="h-2.5 w-2/5" />
+            </div>
+            <Skeleton className="h-3 w-12" />
+          </div>
+        ))
+      ) : children.length === 0 ? (
         <p className="m-0 px-2 py-1.5 text-[12.5px] text-zinc-500 dark:text-zinc-400">{empty}</p>
       ) : (
         children
