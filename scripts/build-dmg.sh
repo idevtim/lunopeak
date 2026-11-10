@@ -96,6 +96,10 @@ echo "🔨 Building $APP_NAME v$VERSION (universal: arm64 + x86_64)..."
 echo "   Tauri codesigns the .app; helper-embed + notarize/DMG happen below."
 cd "$PROJECT_DIR"
 
+# Cargo never garbage-collects target/; drop caches left by previous versions
+# (once per version — retries of the same version stay incremental).
+"$SCRIPT_DIR/prune-target.sh" "$VERSION"
+
 BUNDLE_DIR="$PROJECT_DIR/src-tauri/target/universal-apple-darwin/release/bundle"
 
 # Wipe any prior bundle output. Tauri doesn't always overwrite cleanly when

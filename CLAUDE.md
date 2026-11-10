@@ -9,7 +9,7 @@ Local-first dev dashboard. Tauri 2 (Rust shell) + React 19 + TypeScript + Vite +
 - `npm run typecheck` — `tsc -b --noEmit`.
 - `npm run build` — `tsc -b && vite build`.
 - `npm run tauri:build` — platform bundles to `src-tauri/target/release/bundle/`. Unsigned, no release.
-- `npm run dist:mac` / `dist:win` / `dist:nix` — full end-to-end release per platform: preflight (version triple + `release-notes/vX.Y.Z.md`), build, sign, and draft the GitHub release. `build:mac` / `build:win` / `build:linux` are aliases.
+- `npm run dist:mac` / `dist:win` / `dist:nix` — full end-to-end release per platform: preflight (version triple + `release-notes/vX.Y.Z.md`), build, sign, and draft the GitHub release. `build:mac` / `build:win` / `build:linux` are aliases. `dist:mac` first runs `scripts/prune-target.sh`, which wipes every debug/release cache under `src-tauri/target/` once per version (stamp: `target/.last-dist-version`; `LUNOPEAK_PRUNE=force|skip` overrides).
 - `dist:nix` dispatches on the host: `build-linux.sh` natively on Linux, `docker-build-linux.sh` in an amd64 container on macOS. `-- --build-only` skips the tag/upload (`dist:nix:docker` forces the container path). See [RELEASE.md](RELEASE.md#building-linux-from-macos).
 
 ## Architecture
