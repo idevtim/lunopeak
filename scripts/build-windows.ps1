@@ -353,29 +353,23 @@ foreach ($b in $bundles) {
 if ($signingEnabled) { $assets += $latestJsonPath }
 
 if (-not $releaseExists) {
-  $first, $rest = $assets
   Write-Host ""
-  Write-Host "[*] Creating draft release v$pkgVersion on $ReleaseRepo with $((Split-Path -Leaf $first))..."
-  & gh release create "v$pkgVersion" $first `
+  Write-Host "[*] Creating draft release v$pkgVersion on $ReleaseRepo..."
+  & gh release create "v$pkgVersion" `
     --repo $ReleaseRepo `
     --target $ReleaseTarget `
     --title "v$pkgVersion" `
     --notes-file $releaseNotes `
     --draft
   if ($LASTEXITCODE -ne 0) { Write-Host "[X] gh release create failed"; exit 1 }
-  $remaining = $rest
 } else {
   Write-Host ""
-  Write-Host "[*] Release v$pkgVersion exists on $ReleaseRepo - uploading $($assets.Count) asset(s)..."
-  $remaining = $assets
+  Write-Host "[*] Release v$pkgVersion exists on $ReleaseRepo"
 }
 
-foreach ($a in $remaining) {
-  $name = Split-Path -Leaf $a
-  Write-Host "    uploading $name"
-  & gh release upload "v$pkgVersion" $a --repo $ReleaseRepo --clobber
-  if ($LASTEXITCODE -ne 0) { Write-Host "[X] gh release upload failed for $name"; exit 1 }
-}
+# Live per-file progress (bar, speed, ETA); replaces same-named assets.
+& node (Join-Path $PSScriptRoot "upload-release.mjs") --repo $ReleaseRepo --tag "v$pkgVersion" @assets
+if ($LASTEXITCODE -ne 0) { Write-Host "[X] Upload failed"; exit 1 }
 
 # Verify every asset landed.
 $assetNames = & gh release view "v$pkgVersion" --repo $ReleaseRepo --json assets --jq '.assets[].name'
