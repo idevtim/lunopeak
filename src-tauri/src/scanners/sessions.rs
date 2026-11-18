@@ -358,7 +358,7 @@ fn add_usage(total: &mut TokenUsage, turn: &TokenUsage) {
 
 /// Subagent transcripts belonging to a main session file. Claude Code writes
 /// each Task/Agent run to `<project>/<session-id>/subagents/agent-<id>.jsonl`
-/// (next to an `agent-<id>.meta.json` we don't need); the parent transcript
+/// (next to an `agent-<id>.meta.json`, read by `subagent_run` and the live scanner); the parent transcript
 /// only records the subagent's final result, never its tokens. Sorted for a
 /// stable cache stamp.
 pub(crate) fn subagent_files(session_file: &Path) -> Vec<PathBuf> {
@@ -376,6 +376,66 @@ pub(crate) fn subagent_files(session_file: &Path) -> Vec<PathBuf> {
         .collect();
     files.sort();
     files
+}
+
+/// One subagent's row in a session replay: what it was asked to do (from
+/// its `.meta.json`), when it ran, and how many tool calls it made.
+fn subagent_run(path: &Path, cost_usd: f64) -> crate::models::SubagentRun {
+    let meta = super::live::read_subagent_meta(path);
+    let mut started: Option<i64> = None;
+    let mut ended: i64 = 0;
+    let mut tool_calls = 0u32;
+    // Prefer the transcript's model, as the live scanner does.
+    let mut model: Option<String> = None;
+    if let Ok(file) = File::open(path) {
+        for line in BufReader::new(file).lines().map_while(Result::ok) {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            if let Some(ts) = v.get("timestamp").and_then(|t| t.as_str()).and_then(parse_iso_ts) {
+                started.get_or_insert(ts);
+                ended = ended.max(ts);
+            }
+            if v.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+                continue;
+            }
+            let msg = v.get("message");
+            if let Some(m) = msg
+                .and_then(|m| m.get("model"))
+                .and_then(|m| m.as_str())
+                .filter(|m| *m != "<synthetic>")
+            {
+                model = Some(m.to_string());
+            }
+            if let Some(blocks) = msg.and_then(|m| m.get("content")).and_then(|c| c.as_array()) {
+                tool_calls += blocks
+                    .iter()
+                    .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_use"))
+                    .count() as u32;
+            }
+        }
+    }
+    // Claude Code only marks a run finished when it ends cleanly; one whose
+    // session was killed (or that predates the marker) never gets it, so a
+    // transcript quiet for longer than the live window counts as finished.
+    let quiet = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map(|t| {
+            t.elapsed()
+                .is_ok_and(|age| age > super::live::RECENT_WINDOW)
+        })
+        .unwrap_or(true);
+    crate::models::SubagentRun {
+        id: super::live::subagent_id(path).unwrap_or_default(),
+        agent_type: meta.agent_type,
+        description: meta.description,
+        model: model.or(meta.model),
+        started_ts: started.unwrap_or(0),
+        end_ts: ended,
+        tool_calls,
+        cost_usd,
+        finished: meta.finished || quiet,
+    }
 }
 
 /// Fold one subagent transcript's assistant-turn spend into the parent's
@@ -680,9 +740,13 @@ pub fn scan_detail(id: &str) -> Option<SessionDetail> {
 
     let subagents = subagent_files(&path);
     let mut subagent_cost = 0.0_f64;
+    let mut runs = Vec::with_capacity(subagents.len());
     for sub in &subagents {
-        subagent_cost += add_subagent_spend(sub, &mut usage, None);
+        let run_cost = add_subagent_spend(sub, &mut usage, None);
+        subagent_cost += run_cost;
+        runs.push(subagent_run(sub, run_cost));
     }
+    runs.sort_by_key(|r| r.started_ts);
     cost += subagent_cost;
 
     let resolved_id =
@@ -704,6 +768,7 @@ pub fn scan_detail(id: &str) -> Option<SessionDetail> {
         cost_usd: cost,
         subagent_count: subagents.len() as u32,
         subagent_cost_usd: subagent_cost,
+        subagents: runs,
         usage,
         first_prompt,
         files_modified,
@@ -1638,6 +1703,35 @@ mod tests {
             }
         })
         .to_string()
+    }
+
+    #[test]
+    fn subagent_run_reads_meta_and_prefers_transcript_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let t = dir.path().join("agent-abc.jsonl");
+        let lines = [
+            r#"{"type":"user","timestamp":"2026-11-18T10:00:00Z","message":{"content":"go"}}"#,
+            r#"{"type":"assistant","timestamp":"2026-11-18T10:02:00Z","message":{"model":"claude-sonnet-5-5","content":[{"type":"tool_use","name":"Read","input":{}},{"type":"tool_use","name":"Grep","input":{}}]}}"#,
+        ];
+        std::fs::write(&t, lines.join("\n")).unwrap();
+        std::fs::write(
+            dir.path().join("agent-abc.meta.json"),
+            r#"{"agentType":"code-reviewer","description":"Review","pickedEffortModel":"claude-fable-5-1"}"#,
+        )
+        .unwrap();
+        let run = subagent_run(&t, 0.5);
+        assert_eq!(run.id, "abc");
+        assert_eq!(run.agent_type.as_deref(), Some("code-reviewer"));
+        assert_eq!(run.model.as_deref(), Some("claude-sonnet-5-5"));
+        assert_eq!(run.tool_calls, 2);
+        assert_eq!(run.end_ts - run.started_ts, 120_000);
+        // Just written and no marker: still running.
+        assert!(!run.finished);
+
+        // Quiet past the live window with no marker: the run was abandoned.
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::options().write(true).open(&t).unwrap().set_modified(old).unwrap();
+        assert!(subagent_run(&t, 0.5).finished);
     }
 
     /// Subagent transcripts live in `<session-id>/subagents/` and their spend

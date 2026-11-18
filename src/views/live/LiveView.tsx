@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Code2, Folder, MessageCircle, Sparkles, Square, X } from "lucide-react";
+import { Activity, Bot, Check, Code2, Folder, MessageCircle, Sparkles, Square, X } from "lucide-react";
 import { queries } from "@/lib/queries";
 import { api } from "@/lib/tauri";
 import { useDelayedLoading } from "@/hooks/useDelayedLoading";
@@ -30,7 +30,7 @@ import {
   type PidState,
 } from "@/stores/processSamplesStore";
 import { providerAccent, providerLabel } from "@/views/tray-panel/shared";
-import type { ActiveProcess, LiveAgent, LiveContext, SessionLiveState } from "@/types/api";
+import type { ActiveProcess, LiveAgent, LiveContext, LiveSubagent, SessionLiveState } from "@/types/api";
 import { LiveFeed } from "./LiveFeed";
 import { LiveSkeleton } from "./LiveSkeleton";
 import {
@@ -41,6 +41,8 @@ import {
   runningFor,
   sessionState,
   shortAge,
+  subagentTitle,
+  subagentTypeLabel,
   type SessionState,
 } from "./describe";
 
@@ -164,13 +166,19 @@ export function LiveView() {
   const rows = sorted.map((p) => {
     const session = sessionByPid.get(p.pid);
     const context = contextFor(p);
-    const stale = isStale(samples[p.pid]);
+    const subagentsRunning = Math.max(
+      context?.subagentsRunning ?? 0,
+      session?.subagents.filter((a) => a.status === "running").length ?? 0,
+    );
+    // Memory can sit flat while background subagents do the work.
+    const stale = isStale(samples[p.pid]) && subagentsRunning === 0;
     const state: SessionState = stale
       ? "idle"
       : sessionState({
           status: context?.status,
           lastTs: Math.max(session?.lastTs ?? 0, context?.lastTs ?? 0) || null,
           lastTool: session?.lastTool,
+          subagentsRunning,
           now,
         });
     return { proc: p, session, context, stale, state };
@@ -364,6 +372,10 @@ function SessionCard({ proc, samples, session, context, state, now }: SessionCar
 
       {lastAction && <LastAction session={lastAction} now={now} />}
 
+      {session && session.subagents.length > 0 && (
+        <SubagentList subagents={session.subagents} now={now} />
+      )}
+
       <div className="flex flex-wrap items-center gap-3 border-t border-black/[0.05] pt-2.5 dark:border-white/[0.06]">
         <ChatMemory context={context} />
         <SessionActions
@@ -414,6 +426,82 @@ function LastAction({ session, now }: { session: SessionLiveState; now: number }
       </span>
       <span className="shrink-0 text-zinc-400 dark:text-zinc-500">{shortAge(session.lastTs, now)} ago</span>
     </div>
+  );
+}
+
+/**
+ * The session's subagents, nested under the main chat: running ones with
+ * their latest step, finished ones as a single quiet line each.
+ */
+function SubagentList({ subagents, now }: { subagents: LiveSubagent[]; now: number }) {
+  const running = subagents.filter((a) => a.status === "running").length;
+  const done = subagents.length - running;
+  const summary = [running > 0 && `${running} working`, done > 0 && `${done} done`]
+    .filter(Boolean)
+    .join(", ");
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+        <Bot size={13} strokeWidth={1.9} className="shrink-0" />
+        <span className="font-medium text-zinc-700 dark:text-zinc-300">Subagents</span>
+        <span>· {summary}</span>
+      </div>
+      <ul className="m-0 ml-[6px] flex list-none flex-col gap-1.5 border-l border-black/[0.08] p-0 pl-3 dark:border-white/[0.1]">
+        {subagents.map((a) => (
+          <SubagentRow key={a.id} sub={a} now={now} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function SubagentRow({ sub, now }: { sub: LiveSubagent; now: number }) {
+  const running = sub.status === "running";
+  const meta = [subagentTypeLabel(sub.agentType), shortModel(sub.model)].filter(Boolean).join(" · ");
+  const elapsedSec = Math.max(0, Math.round(((running ? now : sub.lastTs) - sub.startedTs) / 1000));
+  const elapsed = sub.startedTs > 0 ? runningFor(Math.max(60, elapsedSec)) : null;
+  const action = running && (sub.lastTool || sub.lastSummary) ? describeAction(sub.lastTool, sub.lastSummary) : null;
+
+  return (
+    <li className="flex flex-col gap-0.5">
+      <div className="flex items-center gap-2">
+        {running ? (
+          <LiveDot size="sm" tone="emerald" />
+        ) : (
+          <Check size={12} strokeWidth={2.2} className="shrink-0 text-zinc-400 dark:text-zinc-500" />
+        )}
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-[12.5px]",
+            running ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-500 dark:text-zinc-400",
+          )}
+          title={sub.description ?? undefined}
+        >
+          {subagentTitle(sub)}
+          {meta && <span className="ml-2 text-[11.5px] text-zinc-400 dark:text-zinc-500">{meta}</span>}
+        </span>
+        <span className="shrink-0 text-[11.5px] tabular-nums text-zinc-400 dark:text-zinc-500">
+          {running
+            ? elapsed && `for ${elapsed}`
+            : `done ${shortAge(sub.lastTs, now)} ago${elapsed ? ` · took ${elapsed}` : ""}`}
+        </span>
+      </div>
+      {action && (
+        <div className="flex items-center gap-1.5 pl-[18px] text-[12px] text-zinc-500 dark:text-zinc-400">
+          <action.Icon size={12} strokeWidth={1.9} className="shrink-0" />
+          <span className="min-w-0 flex-1 truncate" title={sub.lastSummary ?? undefined}>
+            {action.verb}
+            {action.detail && (
+              <>
+                {" "}
+                <Mono className="text-zinc-700 dark:text-zinc-300">{action.detail}</Mono>
+              </>
+            )}
+          </span>
+          <span className="shrink-0 text-zinc-400 dark:text-zinc-500">{shortAge(sub.lastTs, now)} ago</span>
+        </div>
+      )}
+    </li>
   );
 }
 

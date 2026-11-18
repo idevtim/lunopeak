@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Code2, History, Pause, Play } from "lucide-react";
+import { Bot, ChevronLeft, ChevronRight, Code2, History, Pause, Play } from "lucide-react";
 import { api } from "@/lib/tauri";
 import { useHashRoute } from "@/hooks/useHashRoute";
 import { useDelayedLoading } from "@/hooks/useDelayedLoading";
@@ -14,6 +14,9 @@ import { Pill } from "@/components/ui/Pill";
 import { ProviderIcon } from "@/components/ui/ProviderIcon";
 import { formatCount, formatUsd, plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { shortModel } from "@/components/ui/ContextMeter";
+import { subagentTitle, subagentTypeLabel } from "@/views/live/describe";
+import type { SubagentRun } from "@/types/api";
 import {
   STEP_META,
   buildSteps,
@@ -250,6 +253,8 @@ export function SessionReplayView() {
         )}
       </Card>
 
+      {d.subagents.length > 0 && <SubagentsCard runs={d.subagents} />}
+
       {d.filesModified.length > 0 && (
         <Card className="pb-3">
           <CardHeader title="Files changed" meta={plural(d.filesModified.length, "file")} />
@@ -263,6 +268,50 @@ export function SessionReplayView() {
         </Card>
       )}
     </Page>
+  );
+}
+
+/** Every subagent the session handed work to, in the order it started them. */
+function SubagentsCard({ runs }: { runs: SubagentRun[] }) {
+  const total = runs.reduce((sum, r) => sum + r.costUsd, 0);
+  return (
+    <Card className="pb-2">
+      <CardHeader
+        title="Subagents"
+        meta={`${plural(runs.length, "run")}${total > 0 ? ` · ${formatUsd(total)}` : ""}`}
+      />
+      <ul className="m-0 flex list-none flex-col p-0 px-[18px]">
+        {runs.map((r, i) => {
+          const meta = [subagentTypeLabel(r.agentType), shortModel(r.model)].filter(Boolean).join(" · ");
+          const when = r.startedTs > 0
+            ? `${clockTime(r.startedTs)}, ${shortDuration(Math.max(0, r.endTs - r.startedTs))}`
+            : null;
+          return (
+            <li
+              key={r.id}
+              className={cn(
+                "flex items-center gap-2.5 py-2",
+                i > 0 && "border-t border-black/[0.05] dark:border-white/[0.06]",
+              )}
+            >
+              <Bot size={14} strokeWidth={1.9} className="shrink-0 text-zinc-500 dark:text-zinc-400" />
+              <div className="flex min-w-0 flex-1 flex-col gap-px">
+                <span className="truncate text-[13px] text-zinc-900 dark:text-zinc-100" title={r.description ?? undefined}>
+                  {subagentTitle(r)}
+                </span>
+                <span className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                  {[meta, when, plural(r.toolCalls, "step")].filter(Boolean).join(" · ")}
+                </span>
+              </div>
+              {!r.finished && <Pill tone="green">Running</Pill>}
+              <span className="w-16 shrink-0 text-right text-[13px] font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                {r.costUsd > 0 ? formatUsd(r.costUsd) : "—"}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
   );
 }
 

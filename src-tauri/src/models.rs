@@ -703,12 +703,30 @@ pub struct SessionDetail {
     pub cost_usd: f64,
     pub subagent_count: u32,
     pub subagent_cost_usd: f64,
+    /// One row per subagent run, in start order.
+    #[serde(default)]
+    pub subagents: Vec<SubagentRun>,
     pub usage: TokenUsage,
     pub first_prompt: Option<String>,
     /// Unique file paths touched by Edit/Write/NotebookEdit during this
     /// session, oldest reference first.
     pub files_modified: Vec<String>,
     pub events: Vec<SessionEvent>,
+}
+
+/// A finished or running subagent inside a session replay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentRun {
+    pub id: String,
+    pub agent_type: Option<String>,
+    pub description: Option<String>,
+    pub model: Option<String>,
+    pub started_ts: i64,
+    pub end_ts: i64,
+    pub tool_calls: u32,
+    pub cost_usd: f64,
+    pub finished: bool,
 }
 
 /// A transcript with full-text search hits, for the Transcripts view.
@@ -733,6 +751,12 @@ pub struct LiveEvent {
     /// Source agent — "claude" or "codex". Lets the UI match a process to
     /// sessions of the same agent type when several agents share a cwd.
     pub agent: String,
+    /// Set when a Claude subagent made this call rather than the main chat:
+    /// that subagent's id (`agent-<id>.jsonl`) and its task description.
+    #[serde(default)]
+    pub subagent_id: Option<String>,
+    #[serde(default)]
+    pub subagent: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -754,6 +778,29 @@ pub struct SessionLiveState {
     pub todos: Vec<LiveTodo>,
     /// Source agent — "claude" or "codex".
     pub agent: String,
+    /// Claude subagents this session started that are running or finished
+    /// within the live window, newest first. Empty for other agents.
+    #[serde(default)]
+    pub subagents: Vec<LiveSubagent>,
+}
+
+/// One Claude Code subagent run, from `<session>/subagents/agent-<id>.jsonl`
+/// and its `.meta.json` sibling.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveSubagent {
+    pub id: String,
+    /// "general-purpose", "Explore", "Plan", or a custom agent's name.
+    pub agent_type: Option<String>,
+    /// The short task description the parent gave it.
+    pub description: Option<String>,
+    pub model: Option<String>,
+    /// "running" | "done"
+    pub status: String,
+    pub started_ts: i64,
+    pub last_ts: i64,
+    pub last_tool: Option<String>,
+    pub last_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -788,6 +835,9 @@ pub struct LiveContext {
     pub status: Option<String>,
     /// Epoch ms of the latest activity we saw for this session.
     pub last_ts: i64,
+    /// Claude subagents this session has running right now.
+    #[serde(default)]
+    pub subagents_running: u32,
 }
 
 // ── Terminal status line integration ──────────────────────────────────

@@ -168,7 +168,9 @@ export function DashboardView() {
 
   const now = Date.now();
   const contexts = liveContexts.data ?? [];
-  const states = contexts.map((c) => sessionState({ status: c.status, lastTs: c.lastTs, now }));
+  const states = contexts.map((c) =>
+    sessionState({ status: c.status, lastTs: c.lastTs, subagentsRunning: c.subagentsRunning, now }),
+  );
   // Live process count only — never the summary's figure, which can come from
   // a restored snapshot and would read as agents running right now.
   const agents = activeProcesses.data?.length;
@@ -607,7 +609,13 @@ function RunningNowCard({ contexts, states }: { contexts: LiveContext[]; states:
                   >
                     {full
                       ? "Almost full. Start a new chat soon."
-                      : [SESSION_STATE_LABEL[states[i]], folder !== title ? folder : null].filter(Boolean).join(" · ")}
+                      : [
+                          SESSION_STATE_LABEL[states[i]],
+                          c.subagentsRunning > 0 ? `${plural(c.subagentsRunning, "subagent")} working` : null,
+                          folder !== title ? folder : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
                   </span>
                 </div>
                 <span className={cn("text-[13px] font-semibold tabular-nums", contextPctClass(c.usedPercent))}>

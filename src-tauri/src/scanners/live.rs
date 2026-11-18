@@ -1,4 +1,4 @@
-use crate::models::{LiveActivity, LiveContext, LiveEvent, LiveTodo, SessionLiveState};
+use crate::models::{LiveActivity, LiveContext, LiveEvent, LiveSubagent, LiveTodo, SessionLiveState};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::fs::File;
@@ -9,18 +9,19 @@ use std::time::{Duration, SystemTime};
 /// Only consider transcript files modified within this window. Ten minutes is
 /// loose enough to capture sessions that just paused for thinking, tight
 /// enough that we never re-parse historical chats.
-const RECENT_WINDOW: Duration = Duration::from_secs(10 * 60);
+pub(crate) const RECENT_WINDOW: Duration = Duration::from_secs(10 * 60);
 
 /// Hard cap on feed length so we never ship a runaway payload to the UI.
 const MAX_FEED: usize = 100;
 
 pub fn collect(limit: usize) -> LiveActivity {
-    let Some(root) = projects_dir() else {
-        return empty();
-    };
-    if !root.is_dir() {
-        return empty();
+    match projects_dir() {
+        Some(root) if root.is_dir() => collect_in(&root, limit),
+        _ => empty(),
     }
+}
+
+fn collect_in(root: &Path, limit: usize) -> LiveActivity {
 
     let cutoff = SystemTime::now()
         .checked_sub(RECENT_WINDOW)
@@ -29,7 +30,11 @@ pub fn collect(limit: usize) -> LiveActivity {
     let mut events: Vec<LiveEvent> = Vec::new();
     let mut sessions: HashMap<String, SessionLiveState> = HashMap::new();
 
-    let Ok(read_dir) = std::fs::read_dir(&root) else {
+    // Session folders holding subagent transcripts, visited after every main
+    // transcript so their runs can attach to an already-parsed parent.
+    let mut subagent_dirs: Vec<(String, PathBuf)> = Vec::new();
+
+    let Ok(read_dir) = std::fs::read_dir(root) else {
         return empty();
     };
     for project in read_dir.flatten() {
@@ -42,6 +47,18 @@ pub fn collect(limit: usize) -> LiveActivity {
         };
         for file in files.flatten() {
             let path = file.path();
+            if file.file_type().is_ok_and(|t| t.is_dir()) {
+                // Appending to a transcript doesn't touch its folder's mtime,
+                // so every `subagents/` folder has to be listed; there are
+                // only a few dozen, against thousands of session folders.
+                let sub = path.join("subagents");
+                if sub.is_dir() {
+                    if let Some(sid) = path.file_name().and_then(|n| n.to_str()) {
+                        subagent_dirs.push((sid.to_string(), sub));
+                    }
+                }
+                continue;
+            }
             if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                 continue;
             }
@@ -54,6 +71,40 @@ pub fn collect(limit: usize) -> LiveActivity {
             }
             parse_recent(&path, &mut events, &mut sessions);
         }
+    }
+
+    for (sid, dir) in subagent_dirs {
+        let runs = scan_subagents(&dir, cutoff);
+        if runs.is_empty() {
+            continue;
+        }
+        let entry = sessions.entry(sid.clone()).or_insert_with(|| SessionLiveState {
+            // The main chat can sit quiet for the whole run of a foreground
+            // subagent; the session is still live, so stand one up.
+            session_id: sid.clone(),
+            cwd: runs.iter().find_map(|r| r.cwd.clone()),
+            last_ts: 0,
+            last_tool: None,
+            last_summary: None,
+            todos: Vec::new(),
+            agent: "claude".to_string(),
+            subagents: Vec::new(),
+        });
+        for run in runs {
+            // Work done by a subagent is work done by the session.
+            entry.last_ts = entry.last_ts.max(run.info.last_ts);
+            for mut e in run.events {
+                e.session_id = sid.clone();
+                if e.cwd.is_none() {
+                    e.cwd = entry.cwd.clone();
+                }
+                events.push(e);
+            }
+            entry.subagents.push(run.info);
+        }
+        entry.subagents.sort_by_key(|a| {
+            (a.status != "running", std::cmp::Reverse(a.last_ts))
+        });
     }
 
     events.sort_by_key(|e| std::cmp::Reverse(e.ts));
@@ -174,6 +225,8 @@ fn parse_recent(
                 tool: tool.clone(),
                 summary: summary.clone(),
                 agent: "claude".to_string(),
+                subagent_id: None,
+                subagent: None,
             });
             last_tool = Some(tool);
             last_summary = Some(summary);
@@ -193,8 +246,215 @@ fn parse_recent(
             last_summary,
             todos,
             agent: "claude".to_string(),
+            subagents: Vec::new(),
         },
     );
+}
+
+// ── Subagents ─────────────────────────────────────────────────────────
+
+/// How far back to tail-read a subagent transcript for its latest steps.
+/// They grow fast (a megabyte in a few minutes) and are polled every couple
+/// of seconds, so never read one whole.
+const SUBAGENT_TAIL_BYTES: u64 = 256 * 1024;
+
+/// Steps per subagent sent to the feed; the feed shows the newest overall.
+const SUBAGENT_FEED_EVENTS: usize = 20;
+
+struct SubagentRunScan {
+    info: LiveSubagent,
+    cwd: Option<String>,
+    events: Vec<LiveEvent>,
+}
+
+/// What `agent-<id>.meta.json` records about a run. `finished` is absent
+/// (not false) while it runs; `model` is often missing, with the effort
+/// picker's choice in `pickedEffortModel`.
+#[derive(Default)]
+pub(crate) struct SubagentMeta {
+    pub agent_type: Option<String>,
+    pub description: Option<String>,
+    pub model: Option<String>,
+    pub finished: bool,
+}
+
+pub(crate) fn read_subagent_meta(transcript: &Path) -> SubagentMeta {
+    let Some(raw) = std::fs::read_to_string(transcript.with_extension("meta.json")).ok() else {
+        return SubagentMeta::default();
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return SubagentMeta::default();
+    };
+    let s = |k: &str| {
+        v.get(k)
+            .and_then(|x| x.as_str())
+            .filter(|x| !x.is_empty())
+            .map(str::to_string)
+    };
+    SubagentMeta {
+        agent_type: s("agentType"),
+        description: s("description"),
+        model: s("model").or_else(|| s("pickedEffortModel")),
+        finished: v.get("finished").and_then(|f| f.as_bool()).unwrap_or(false),
+    }
+}
+
+/// `agent-<id>.jsonl` → `<id>`.
+pub(crate) fn subagent_id(transcript: &Path) -> Option<String> {
+    let stem = transcript.file_stem()?.to_str()?;
+    Some(stem.strip_prefix("agent-").unwrap_or(stem).to_string())
+}
+
+/// Subagent transcripts in `dir` written to since `cutoff`. Anything older
+/// is either long finished or abandoned (its session was killed mid-run).
+fn recent_subagent_files(dir: &Path, cutoff: SystemTime) -> Vec<(PathBuf, SystemTime)> {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    rd.flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            let name = p.file_name()?.to_str()?;
+            if !name.starts_with("agent-") || !name.ends_with(".jsonl") {
+                return None;
+            }
+            let mtime = e.metadata().ok()?.modified().ok()?;
+            (mtime >= cutoff).then_some((p, mtime))
+        })
+        .collect()
+}
+
+/// Subagents in a session's `subagents/` folder that are running, or that
+/// finished inside the live window.
+fn scan_subagents(dir: &Path, cutoff: SystemTime) -> Vec<SubagentRunScan> {
+    recent_subagent_files(dir, cutoff)
+        .into_iter()
+        .filter_map(|(path, _)| scan_subagent(&path))
+        .collect()
+}
+
+fn scan_subagent(path: &Path) -> Option<SubagentRunScan> {
+    let id = subagent_id(path)?;
+    let meta = read_subagent_meta(path);
+
+    // The first line is the parent's prompt, stamped with the start time.
+    let first = File::open(path)
+        .ok()
+        .and_then(|f| BufReader::new(f).lines().next())
+        .and_then(Result::ok)
+        .and_then(|l| serde_json::from_str::<serde_json::Value>(&l).ok());
+    let started_ts = first
+        .as_ref()
+        .and_then(|v| v.get("timestamp"))
+        .and_then(|t| t.as_str())
+        .and_then(parse_iso_ts)
+        .unwrap_or(0);
+    let mut cwd = first
+        .as_ref()
+        .and_then(|v| v.get("cwd"))
+        .and_then(|c| c.as_str())
+        .map(str::to_string);
+
+    let label = meta.description.clone().or_else(|| meta.agent_type.clone());
+    // The transcript's own model wins: `pickedEffortModel` can name a model
+    // the run never used (a custom agent pinned to another one).
+    let mut model: Option<String> = None;
+    let mut last_ts = started_ts;
+    let mut last_tool = None;
+    let mut last_summary = None;
+    let mut events = Vec::new();
+
+    let (lines, _) = read_tail_lines(path, SUBAGENT_TAIL_BYTES);
+    for line in &lines {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let ts = v
+            .get("timestamp")
+            .and_then(|t| t.as_str())
+            .and_then(parse_iso_ts)
+            .unwrap_or(0);
+        last_ts = last_ts.max(ts);
+        if cwd.is_none() {
+            cwd = v.get("cwd").and_then(|c| c.as_str()).map(str::to_string);
+        }
+        if v.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        if let Some(m) = v
+            .get("message")
+            .and_then(|m| m.get("model"))
+            .and_then(|m| m.as_str())
+            .filter(|m| *m != "<synthetic>")
+        {
+            model = Some(m.to_string());
+        }
+        let Some(blocks) = v
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_array())
+        else {
+            continue;
+        };
+        for block in blocks {
+            if block.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
+                continue;
+            }
+            let Some(tool) = block.get("name").and_then(|n| n.as_str()).filter(|n| !n.is_empty())
+            else {
+                continue;
+            };
+            if tool == "TodoWrite" {
+                continue;
+            }
+            let input = block.get("input").cloned().unwrap_or(serde_json::Value::Null);
+            let summary = summarize_tool(tool, &input);
+            events.push(LiveEvent {
+                ts,
+                session_id: String::new(),
+                cwd: cwd.clone(),
+                tool: tool.to_string(),
+                summary: summary.clone(),
+                agent: "claude".to_string(),
+                subagent_id: Some(id.clone()),
+                subagent: label.clone(),
+            });
+            last_tool = Some(tool.to_string());
+            last_summary = Some(summary);
+        }
+    }
+    if events.len() > SUBAGENT_FEED_EVENTS {
+        events.drain(..events.len() - SUBAGENT_FEED_EVENTS);
+    }
+
+    Some(SubagentRunScan {
+        info: LiveSubagent {
+            id,
+            agent_type: meta.agent_type,
+            description: meta.description,
+            model: model.or(meta.model),
+            status: if meta.finished { "done" } else { "running" }.to_string(),
+            started_ts,
+            last_ts,
+            last_tool,
+            last_summary,
+        },
+        cwd,
+        events,
+    })
+}
+
+/// Subagents still running under the session whose main transcript is
+/// `transcript` — the `<session-id>/subagents/` folder beside it.
+fn running_subagents(transcript: &Path) -> u32 {
+    let cutoff = SystemTime::now()
+        .checked_sub(RECENT_WINDOW)
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+    let dir = transcript.with_extension("").join("subagents");
+    recent_subagent_files(&dir, cutoff)
+        .iter()
+        .filter(|(p, _)| !read_subagent_meta(p).finished)
+        .count() as u32
 }
 
 // ── Per-process context window ─────────────────────────────────────────
@@ -265,10 +525,11 @@ pub fn contexts() -> Vec<LiveContext> {
         if cwd.as_deref().is_some_and(is_temp_path) {
             continue;
         }
-        let turn = projects
+        let transcript = projects
             .as_deref()
-            .and_then(|root| find_transcript(root, cwd.as_deref(), session_id))
-            .and_then(|path| latest_claude_turn(&path));
+            .and_then(|root| find_transcript(root, cwd.as_deref(), session_id));
+        let turn = transcript.as_deref().and_then(latest_claude_turn);
+        let subagents_running = transcript.as_deref().map(running_subagents).unwrap_or(0);
         let updated = v
             .get("statusUpdatedAt")
             .or_else(|| v.get("updatedAt"))
@@ -303,6 +564,7 @@ pub fn contexts() -> Vec<LiveContext> {
             used_percent: used.zip(window).map(|(u, w)| percent(u, w)),
             status: v.get("status").and_then(|s| s.as_str()).map(str::to_string),
             last_ts: updated.max(turn_ts),
+            subagents_running,
         });
     }
     out
@@ -608,6 +870,142 @@ mod tests {
 
         let t = latest_claude_turn(f.path()).unwrap();
         assert_eq!(t.used_tokens, 20_001);
+    }
+
+    fn tool_line(session: &str, cwd: &str, ts: &str, tool: &str, input: serde_json::Value) -> String {
+        serde_json::json!({
+            "type": "assistant",
+            "sessionId": session,
+            "cwd": cwd,
+            "timestamp": ts,
+            "message": {
+                "model": "claude-opus-5-5",
+                "content": [{ "type": "tool_use", "name": tool, "input": input }]
+            }
+        })
+        .to_string()
+    }
+
+    fn write(path: &Path, lines: &[String]) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, lines.join("\n") + "\n").unwrap();
+    }
+
+    #[test]
+    fn subagents_attach_to_parent_without_clobbering_it() {
+        let root = tempfile::tempdir().unwrap();
+        let proj = root.path().join("-Users-me-app");
+        write(
+            &proj.join("parent.jsonl"),
+            &[tool_line("parent", "/Users/me/app", "2026-11-18T10:00:00Z", "Agent",
+                serde_json::json!({ "description": "Review the diff" }))],
+        );
+        let subs = proj.join("parent").join("subagents");
+        // Running: no `finished` key; its lines carry the parent's sessionId.
+        write(
+            &subs.join("agent-aaa.jsonl"),
+            &[
+                serde_json::json!({ "type": "user", "sessionId": "parent", "cwd": "/Users/me/app",
+                    "timestamp": "2026-11-18T10:00:01Z", "message": { "content": "go" } }).to_string(),
+                tool_line("parent", "/Users/me/app", "2026-11-18T10:00:05Z", "Read",
+                    serde_json::json!({ "file_path": "/Users/me/app/src/a.ts" })),
+            ],
+        );
+        std::fs::write(
+            subs.join("agent-aaa.meta.json"),
+            r#"{"agentType":"Explore","description":"Map the auth flow","pickedEffortModel":"claude-fable-5-1"}"#,
+        )
+        .unwrap();
+        // Finished.
+        write(
+            &subs.join("agent-bbb.jsonl"),
+            &[tool_line("parent", "/Users/me/app", "2026-11-18T10:00:03Z", "Bash",
+                serde_json::json!({ "command": "npm test" }))],
+        );
+        std::fs::write(
+            subs.join("agent-bbb.meta.json"),
+            r#"{"agentType":"general-purpose","description":"Run tests","finished":true}"#,
+        )
+        .unwrap();
+        // No meta at all.
+        write(
+            &subs.join("agent-ccc.jsonl"),
+            &[tool_line("parent", "/Users/me/app", "2026-11-18T10:00:02Z", "Grep",
+                serde_json::json!({ "pattern": "TODO" }))],
+        );
+
+        let a = collect_in(root.path(), 50);
+        assert_eq!(a.sessions.len(), 1);
+        let s = &a.sessions[0];
+        assert_eq!(s.session_id, "parent");
+        // The main chat's own last step survives.
+        assert_eq!(s.last_tool.as_deref(), Some("Agent"));
+        assert_eq!(s.subagents.len(), 3);
+
+        let by_id = |id: &str| s.subagents.iter().find(|x| x.id == id).unwrap();
+        let aaa = by_id("aaa");
+        assert_eq!(aaa.status, "running");
+        assert_eq!(aaa.agent_type.as_deref(), Some("Explore"));
+        assert_eq!(aaa.model.as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(aaa.last_tool.as_deref(), Some("Read"));
+        assert!(aaa.started_ts < aaa.last_ts);
+        assert_eq!(by_id("bbb").status, "done");
+        let ccc = by_id("ccc");
+        assert_eq!(ccc.status, "running");
+        assert!(ccc.description.is_none());
+        assert_eq!(ccc.model.as_deref(), Some("claude-opus-5-5"));
+        // Running first.
+        assert_eq!(s.subagents[2].id, "bbb");
+        // Session counts the subagents' newer work.
+        assert_eq!(s.last_ts, aaa.last_ts);
+
+        let read = a.feed.iter().find(|e| e.tool == "Read").unwrap();
+        assert_eq!(read.session_id, "parent");
+        assert_eq!(read.subagent_id.as_deref(), Some("aaa"));
+        assert_eq!(read.subagent.as_deref(), Some("Map the auth flow"));
+        let agent = a.feed.iter().find(|e| e.tool == "Agent").unwrap();
+        assert!(agent.subagent.is_none());
+
+        assert_eq!(running_subagents(&proj.join("parent.jsonl")), 2);
+    }
+
+    #[test]
+    fn quiet_parent_still_shows_its_running_subagent() {
+        let root = tempfile::tempdir().unwrap();
+        let proj = root.path().join("-Users-me-app");
+        let subs = proj.join("parent").join("subagents");
+        write(
+            &subs.join("agent-aaa.jsonl"),
+            &[tool_line("parent", "/Users/me/app", "2026-11-18T10:00:05Z", "Edit",
+                serde_json::json!({ "file_path": "/Users/me/app/x.rs" }))],
+        );
+        let a = collect_in(root.path(), 50);
+        assert_eq!(a.sessions.len(), 1);
+        let s = &a.sessions[0];
+        assert_eq!(s.session_id, "parent");
+        assert_eq!(s.cwd.as_deref(), Some("/Users/me/app"));
+        assert!(s.last_tool.is_none());
+        assert_eq!(s.subagents.len(), 1);
+        assert_eq!(a.feed.len(), 1);
+    }
+
+    /// Prints live subagents on this machine.
+    /// `cargo test live_subagents_smoke -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn live_subagents_smoke() {
+        let t = std::time::Instant::now();
+        let a = collect(40);
+        println!("collect took {:?}", t.elapsed());
+        for s in a.sessions.iter().filter(|s| !s.subagents.is_empty()) {
+            println!("{} {:?}", s.session_id, s.cwd);
+            for sub in &s.subagents {
+                println!("  {sub:?}");
+            }
+        }
+        for e in a.feed.iter().filter(|e| e.subagent.is_some()).take(5) {
+            println!("feed: {e:?}");
+        }
     }
 
     /// Prints the contexts for sessions running on this machine.

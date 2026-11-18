@@ -1,3 +1,4 @@
+import { Bot } from "lucide-react";
 import { Card, Mono } from "@/components/ui/Page";
 import { LiveDot } from "@/components/ui/LiveDot";
 import { ProviderIcon } from "@/components/ui/ProviderIcon";
@@ -65,9 +66,18 @@ function FeedRow({ event, now, first }: { event: LiveEvent; now: number; first: 
             </>
           )}
         </span>
-        <span className="truncate text-[11.5px] text-zinc-500 dark:text-zinc-400">
-          {folder && <>{folder} · </>}
-          <Mono className="text-[11px]">{event.tool}</Mono>
+        <span className="flex min-w-0 items-center text-[11.5px] text-zinc-500 dark:text-zinc-400">
+          <span className="truncate">
+            {folder && <>{folder} · </>}
+            {event.subagentId ? (
+              <span title="Done by a subagent">
+                <Bot size={11} strokeWidth={2} className="mb-px mr-0.5 inline" />
+                {event.subagent ?? "subagent"}
+              </span>
+            ) : (
+              <Mono className="text-[11px]">{event.tool}</Mono>
+            )}
+          </span>
         </span>
       </div>
       <span className="shrink-0 whitespace-nowrap text-[11.5px] text-zinc-400 dark:text-zinc-500">
