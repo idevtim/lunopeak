@@ -87,6 +87,8 @@ pub fn collect(limit: usize) -> LiveActivity {
                 tool: tool.clone(),
                 summary: summary.clone(),
                 agent: "cursor".to_string(),
+                subagent_id: None,
+                subagent: None,
             });
             if bubble.ts >= session_last_ts {
                 session_last_ts = bubble.ts;
@@ -105,6 +107,7 @@ pub fn collect(limit: usize) -> LiveActivity {
                 last_summary: session_last_summary,
                 todos: Vec::new(),
                 agent: "cursor".to_string(),
+                subagents: Vec::new(),
             },
         );
     }
@@ -166,6 +169,7 @@ pub fn contexts(procs: &[ActiveProcess]) -> Vec<LiveContext> {
             used_percent: c.context_pct.map(|p| p.clamp(0.0, 100.0)),
             status: None,
             last_ts: c.last_updated_ms.unwrap_or(0),
+            subagents_running: 0,
         })
         .collect()
 }

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
 import { api } from "@/lib/tauri";
@@ -8,7 +9,7 @@ import { ProviderIcon } from "@/components/ui/ProviderIcon";
 import { Bone } from "@/components/ui/PageStates";
 import { cn } from "@/lib/utils";
 import { toast } from "@/stores/toastStore";
-import { defaultStatuslinePrefs } from "@/lib/statusline";
+import { OWL_FLAP, defaultStatuslinePrefs } from "@/lib/statusline";
 import type {
   Settings,
   StatuslinePrefs,
@@ -221,7 +222,11 @@ function TerminalPreview({ prefs, chained }: { prefs: StatuslinePrefs; chained: 
   // Keep showing the previous line while the next one renders, so dragging a
   // threshold doesn't flash an empty terminal.
   const preview = useQuery({ ...queries.statuslinePreview(prefs), placeholderData: keepPreviousData });
-  const spans = preview.data ?? [];
+  const owlFrame = useOwlFrame(prefs.owl);
+  // The preview renders a working session, so its first span is the owl:
+  // flap it here the way the terminal does on each one-second repaint.
+  const spans = (preview.data ?? []).map((s, i) => (prefs.owl && i === 0 ? { ...s, text: owlFrame } : s));
+  const empty = !prefs.segments.some((s) => s.enabled);
   return (
     <div className="overflow-hidden rounded-lg border border-black/[0.08] bg-zinc-950 px-3.5 py-3 font-mono text-[11.5px] leading-relaxed dark:border-white/[0.08]">
       <div className="text-zinc-500">
@@ -229,7 +234,7 @@ function TerminalPreview({ prefs, chained }: { prefs: StatuslinePrefs; chained: 
       </div>
       {chained && <div className="truncate text-zinc-500">…your current status line…</div>}
       <div className="truncate whitespace-pre text-zinc-200" title={spans.map((s) => s.text).join("")}>
-        {spans.length === 0 ? (
+        {empty ? (
           <span className="text-zinc-600">Nothing selected. Turn on a segment below.</span>
         ) : (
           spans.map((s, i) => (
@@ -241,6 +246,17 @@ function TerminalPreview({ prefs, chained }: { prefs: StatuslinePrefs; chained: 
       </div>
     </div>
   );
+}
+
+/** The owl's current flap frame, advancing once a second. Holds still under reduced motion. */
+function useOwlFrame(on: boolean): string {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!on || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const id = window.setInterval(() => setTick((t) => t + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [on]);
+  return OWL_FLAP[tick % OWL_FLAP.length];
 }
 
 /** Terminal-ish ANSI colors for the preview (dim = SGR 2, then 32/33/31). */
@@ -343,6 +359,12 @@ function StyleSection({ prefs, onChange }: PrefsProps) {
   const contextOn = prefs.segments.some((s) => s.id === "context" && s.enabled);
   return (
     <SettingsSection title="How the Claude Code line looks">
+      <SettingRow
+        label="Owl"
+        hint="LunoPeak’s owl at the start of the line. It flaps its wings while Claude is working and rests when the turn is done."
+        keywords="status line owl animation working"
+        control={<Switch checked={prefs.owl} onChange={(v) => onChange({ owl: v })} ariaLabel="Owl" />}
+      />
       <SettingRow
         label="Context bar"
         hint="A 10-cell bar before the context percentage."

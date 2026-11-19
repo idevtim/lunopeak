@@ -119,6 +119,8 @@ pub fn run() {
         .setup(move |app| {
             logger::init(app.handle());
             settings::ensure_config_dir(app.handle())?;
+            // Status lines installed before the owl lack a refresh interval.
+            std::thread::spawn(statusline::ensure_refresh);
             // A login launch carries `--from-autostart` (registered on the
             // LaunchAgent above). When present we boot silently into the
             // tray — hidden window — instead of popping the main window and

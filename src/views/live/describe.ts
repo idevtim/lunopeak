@@ -29,21 +29,25 @@ export const SESSION_STATE_LABEL: Record<SessionState, string> = {
  * Working / waiting / idle for a session from what the scanners actually
  * know. Only Claude reports busy/idle — its "idle" means the turn finished
  * and it's waiting on your next message. Agents that don't report it count
- * as working while events are fresh and idle otherwise.
+ * as working while events are fresh and idle otherwise. Running subagents
+ * keep a session working even when its main chat has gone quiet.
  */
 export function sessionState({
   status,
   lastTs,
   lastTool,
+  subagentsRunning = 0,
   now = Date.now(),
 }: {
   status: LiveContext["status"] | undefined;
   lastTs: number | null | undefined;
   lastTool?: string | null;
+  /** A main chat that handed work to background subagents is idle but not done. */
+  subagentsRunning?: number;
   now?: number;
 }): SessionState {
   if (lastTool === "AskUserQuestion" && status !== "busy") return "waiting";
-  if (status === "busy") return "working";
+  if (status === "busy" || subagentsRunning > 0) return "working";
   if (lastTs != null && now - lastTs <= WORKING_WINDOW_MS) return "working";
   if (status === "idle") return "waiting";
   return "idle";
@@ -80,6 +84,8 @@ export function describeAction(tool: string | null, summary: string | null): Act
     case "Task":
     case "Agent":
       return { Icon: Bot, verb: "Started a subagent", detail };
+    case "SubagentHandback":
+      return { Icon: Bot, verb: "Handed back its findings", detail: null };
     case "Skill":
       return { Icon: Sparkles, verb: "Used a skill", detail };
     case "WebFetch":
@@ -141,4 +147,17 @@ export function memoryNote(pct: number | null): { text: string; tone: "rose" | "
   if (pct >= 85) return { text: "Almost full. Start a new chat soon.", tone: "rose" };
   if (pct >= 70) return { text: "Getting full.", tone: "amber" };
   return { text: "Plenty of room", tone: "muted" };
+}
+
+/** "Explore", "Code reviewer" — a subagent type as a short label. */
+export function subagentTypeLabel(agentType: string | null | undefined): string | null {
+  if (!agentType) return null;
+  if (agentType === "general-purpose") return "General";
+  const spaced = agentType.replace(/[-_]+/g, " ").trim();
+  return spaced ? spaced[0].toUpperCase() + spaced.slice(1) : null;
+}
+
+/** What a subagent was asked to do, falling back to its type. */
+export function subagentTitle(sub: { description: string | null; agentType: string | null }): string {
+  return sub.description || subagentTypeLabel(sub.agentType) || "Subagent";
 }

@@ -29,6 +29,8 @@ import type {
   ListeningPort,
   LiveActivity,
   LiveContext,
+  LiveEvent,
+  LiveSubagent,
   TerminalIntegrations,
   StatuslinePrefs,
   StatuslineSpan,
@@ -247,6 +249,17 @@ export const sessionDetail = (id: string): SessionDetail => {
     costUsd: base.costUsd,
     subagentCount: base.subagentCount,
     subagentCostUsd: base.subagentCostUsd,
+    subagents: Array.from({ length: base.subagentCount }, (_, i) => ({
+      id: `demo-sub-${i}`,
+      agentType: i === 0 ? "Explore" : "code-reviewer",
+      description: i === 0 ? "Find every caller of usage_windows" : "Review the cost rollup change",
+      model: i === 0 ? "claude-haiku-5-5" : "claude-opus-5-5",
+      startedTs: base.startTs + (i + 1) * 4 * 60_000,
+      endTs: base.startTs + (i + 1) * 4 * 60_000 + (2 + i) * 60_000,
+      toolCalls: 14 + i * 9,
+      costUsd: base.subagentCostUsd / base.subagentCount,
+      finished: true,
+    })),
     usage: base.usage,
     firstPrompt: base.firstPrompt,
     filesModified: [
@@ -510,15 +523,59 @@ const LIVE_AGENT_CWD: Record<"claude" | "codex" | "cursor", string> = {
   cursor: repoPath("compass-docs"),
 };
 
+/** Two subagents under the Claude session: one still exploring, one done. */
+const LIVE_SUBAGENTS: LiveSubagent[] = [
+  {
+    id: "a1f0c3",
+    agentType: "Explore",
+    description: "Map every api.* fallback",
+    model: "claude-haiku-5-5",
+    status: "running",
+    startedTs: (NOW - 95) * 1000,
+    lastTs: (NOW - 2) * 1000,
+    lastTool: "Grep",
+    lastSummary: "fallback in src/lib",
+  },
+  {
+    id: "b7e9d2",
+    agentType: "code-reviewer",
+    description: "Review the fixtures diff",
+    model: "claude-opus-5-5",
+    status: "done",
+    startedTs: (NOW - 240) * 1000,
+    lastTs: (NOW - 70) * 1000,
+    lastTool: "SubagentHandback",
+    lastSummary: "No blocking issues; two nits in demoFixtures.ts",
+  },
+];
+
+const LIVE_SUBAGENT_FEED: LiveEvent[] = [
+  { ts: (NOW - 2) * 1000,  tool: "Grep", summary: "fallback in src/lib" },
+  { ts: (NOW - 9) * 1000,  tool: "Read", summary: "src/lib/tauri.ts" },
+  { ts: (NOW - 20) * 1000, tool: "Glob", summary: "src/**/*.ts" },
+].map((e) => ({
+  ...e,
+  sessionId: "sess-live-1",
+  cwd: repoPath("northstar-web"),
+  agent: "claude" as const,
+  subagentId: LIVE_SUBAGENTS[0].id,
+  subagent: LIVE_SUBAGENTS[0].description,
+}));
+
 export const liveActivity: LiveActivity = {
-  feed: LIVE_TOOLS.map((t, i) => ({
-    ts: (NOW - i * 12 - 4) * 1000,
-    sessionId: LIVE_AGENT_SESSIONS[t.agent],
-    cwd: LIVE_AGENT_CWD[t.agent],
-    tool: t.tool,
-    summary: t.summary,
-    agent: t.agent,
-  })),
+  feed: [
+    ...LIVE_TOOLS.map((t, i) => ({
+      ts: (NOW - i * 12 - 4) * 1000,
+      sessionId: LIVE_AGENT_SESSIONS[t.agent],
+      cwd: LIVE_AGENT_CWD[t.agent],
+      tool: t.tool,
+      summary: t.summary,
+      agent: t.agent,
+      subagentId: null,
+      subagent: null,
+    })),
+    ...LIVE_SUBAGENT_FEED,
+  ].sort((a, b) => b.ts - a.ts),
   sessions: [
     {
       sessionId: "sess-live-1",
@@ -532,6 +589,7 @@ export const liveActivity: LiveActivity = {
         { content: "Add demo npm script",                   status: "pending"     },
       ],
       agent: "claude",
+      subagents: LIVE_SUBAGENTS,
     },
     {
       sessionId: "sess-live-2",
@@ -545,6 +603,7 @@ export const liveActivity: LiveActivity = {
         { content: "Add regression test",        status: "pending"     },
       ],
       agent: "codex",
+      subagents: [],
     },
     {
       sessionId: "sess-live-3",
@@ -558,6 +617,7 @@ export const liveActivity: LiveActivity = {
         { content: "Pass through review",           status: "pending"     },
       ],
       agent: "cursor",
+      subagents: [],
     },
   ],
 };
@@ -601,6 +661,7 @@ export const liveContexts: LiveContext[] = [
     usedPercent: 41.23,
     status: "busy",
     lastTs: (NOW - 4) * 1000,
+    subagentsRunning: 1,
   },
   {
     agent: "codex",
@@ -614,6 +675,7 @@ export const liveContexts: LiveContext[] = [
     usedPercent: 76.78,
     status: null,
     lastTs: (NOW - 56) * 1000,
+    subagentsRunning: 0,
   },
   {
     agent: "cursor",
@@ -627,6 +689,7 @@ export const liveContexts: LiveContext[] = [
     usedPercent: 23,
     status: null,
     lastTs: (NOW - 22) * 1000,
+    subagentsRunning: 0,
   },
 ];
 
@@ -690,6 +753,7 @@ export function previewStatusline(prefs: StatuslinePrefs): StatuslineSpan[] {
       { text: "main", tone: "plain" },
     ],
   };
+  if (prefs.owl) out.push({ text: "\\{o,o}/", tone: "plain" }, { text: " ", tone: "plain" });
   prefs.segments
     .filter((s) => s.enabled)
     .forEach((s, i) => {

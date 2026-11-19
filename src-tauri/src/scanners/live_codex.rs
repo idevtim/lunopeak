@@ -142,6 +142,7 @@ fn parse_recent(
             last_summary,
             todos: Vec::new(),
             agent: "codex".to_string(),
+            subagents: Vec::new(),
         },
     );
 }
@@ -214,6 +215,7 @@ pub fn contexts(procs: &[ActiveProcess]) -> Vec<LiveContext> {
             used_percent: r.used.zip(r.window).map(|(u, w)| super::live::percent(u, w)),
             status: None,
             last_ts: r.last_ts,
+            subagents_running: 0,
         })
         .collect()
 }
@@ -411,6 +413,8 @@ fn push_event(
         tool: tool.to_string(),
         summary: summary.to_string(),
         agent: "codex".to_string(),
+        subagent_id: None,
+        subagent: None,
     });
 }
 

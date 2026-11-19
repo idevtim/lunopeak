@@ -12,6 +12,11 @@
 //! otherwise infers it from the model name; with a record on disk it uses the
 //! number Claude Code itself reported.
 //!
+//! The line opens with LunoPeak's owl, `{o,o}`. While the session is mid-turn
+//! (or its subagents are still running) the owl flaps its wings: the install
+//! sets `refreshInterval: 1`, so Claude Code repaints every second and each
+//! repaint draws the frame for the current second.
+//!
 //! **Codex** can't run a custom command in its status line (only built-in
 //! item ids under `[tui] status_line`), so the Codex half just opts the user
 //! into the built-in context and limit items.
@@ -121,6 +126,8 @@ pub fn run_cli(args: &[String]) -> i32 {
     }
 
     let prefs = load_prefs();
+    let mut extras = Extras::load();
+    extras.working = prefs.owl && session_working(&input);
     let mut out = String::new();
     if chain {
         if let Some(prev) = run_chained(&raw) {
@@ -128,7 +135,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             out.push('\n');
         }
     }
-    let spans = render_spans(&input, &Extras::load(), &prefs);
+    let spans = render_spans(&input, &extras, &prefs);
     out.push_str(&to_ansi(&spans, prefs.color));
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(stdout, "{out}");
@@ -162,6 +169,8 @@ pub(crate) struct Extras {
     /// Per-model weekly caps, e.g. ("Fable", 63.0, reset).
     scoped: Vec<(String, Window)>,
     today_usd: Option<f64>,
+    /// The session is mid-turn or has subagents running: the owl flaps.
+    working: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -311,6 +320,15 @@ pub(crate) fn render_spans(
         })
     };
 
+    if prefs.owl {
+        if extras.working {
+            line.plain(owl_frame(now));
+        } else {
+            line.dim(OWL_IDLE);
+        }
+        line.plain(" ");
+    }
+
     let mut first = true;
     for seg in prefs.segments.iter().filter(|s| s.enabled) {
         // A segment renders zero or more pieces (model limits can be several);
@@ -415,6 +433,129 @@ pub(crate) fn render_spans(
         }
     }
     line.spans
+}
+
+// ── The owl ────────────────────────────────────────────────────────────
+
+/// Wings down — the owl at rest. Same width as every flap frame so the rest
+/// of the line doesn't shift when a turn starts or ends.
+pub(crate) const OWL_IDLE: &str = "/{o,o}\\";
+
+/// One frame per second while working: wings up, wings down, and a blink
+/// every sixth beat. Claude Code repaints once a second (`refreshInterval`),
+/// so keying the frame to wall-clock seconds keeps extra event repaints from
+/// skipping frames.
+const OWL_FLAP: [&str; 6] = [
+    "\\{o,o}/",
+    "/{o,o}\\",
+    "\\{o,o}/",
+    "/{o,o}\\",
+    "\\{o,o}/",
+    "/{-,-}\\",
+];
+
+/// How often Claude Code re-runs the command, in seconds (its minimum).
+const OWL_REFRESH_SECS: u64 = 1;
+
+/// How much of the transcript to read when deciding whether a turn is open.
+const OWL_TAIL_BYTES: u64 = 256 * 1024;
+
+fn owl_frame(now: i64) -> &'static str {
+    OWL_FLAP[now.rem_euclid(OWL_FLAP.len() as i64) as usize]
+}
+
+/// Whether the session behind this repaint is working: its transcript shows
+/// an open turn, or it has subagents still running. Claude Code's stdin has
+/// no busy flag, so this reads the transcript's tail. A transcript untouched
+/// for ten minutes counts as done even mid-turn — a killed process never
+/// writes its turn's end.
+fn session_working(input: &Value) -> bool {
+    let Some(path) = input
+        .get("transcript_path")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+    else {
+        return false;
+    };
+    let age = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok());
+    if age.is_some_and(|a| a < crate::scanners::live::RECENT_WINDOW) {
+        let (lines, _) = crate::scanners::live::read_tail_lines(&path, OWL_TAIL_BYTES);
+        // Nothing decisive in the tail (one huge tool result): trust recency.
+        let open = turn_in_progress(&lines)
+            .unwrap_or_else(|| age.is_some_and(|a| a < Duration::from_secs(30)));
+        if open {
+            return true;
+        }
+    }
+    crate::scanners::live::running_subagents(&path) > 0
+}
+
+/// Walk the transcript backwards to the latest line that says whether the
+/// main chat's turn is open. `None` when the tail holds no such line.
+///
+/// - `system` / `turn_duration` is written when a turn ends.
+/// - An assistant message is mid-turn unless it stopped for good, or it's
+///   asking the user a question (that's waiting, not working).
+/// - A user line is a prompt or a tool result — both mean Claude is up —
+///   unless it records an interrupt.
+fn turn_in_progress(lines: &[String]) -> Option<bool> {
+    for line in lines.iter().rev() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if v.get("isSidechain").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        match v.get("type").and_then(Value::as_str) {
+            Some("system")
+                if v.get("subtype").and_then(Value::as_str) == Some("turn_duration") =>
+            {
+                return Some(false);
+            }
+            Some("assistant") => {
+                let msg = v.get("message");
+                let asks = msg
+                    .and_then(|m| m.get("content"))
+                    .and_then(Value::as_array)
+                    .is_some_and(|blocks| {
+                        blocks.iter().any(|b| {
+                            b.get("type").and_then(Value::as_str) == Some("tool_use")
+                                && b.get("name").and_then(Value::as_str) == Some("AskUserQuestion")
+                        })
+                    });
+                if asks {
+                    return Some(false);
+                }
+                let stop = msg
+                    .and_then(|m| m.get("stop_reason"))
+                    .and_then(Value::as_str);
+                return Some(!matches!(
+                    stop,
+                    Some("end_turn" | "stop_sequence" | "max_tokens" | "refusal")
+                ));
+            }
+            Some("user") => {
+                if v.get("isMeta").and_then(Value::as_bool) == Some(true) {
+                    continue;
+                }
+                let content = v.get("message").and_then(|m| m.get("content"));
+                let interrupted = |t: &str| t.starts_with("[Request interrupted");
+                let was_interrupted = match content {
+                    Some(Value::String(t)) => interrupted(t),
+                    Some(Value::Array(blocks)) => blocks.iter().any(|b| {
+                        b.get("text").and_then(Value::as_str).is_some_and(interrupted)
+                    }),
+                    _ => false,
+                };
+                return Some(!was_interrupted);
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Spans → terminal text. Dim is SGR 2; tones map to green / yellow / red.
@@ -804,18 +945,20 @@ fn install_claude_at(settings_path: &Path, chain_path: &Path, exe: &str) -> Resu
         _ => false,
     };
 
+    // Repaint every second (Claude Code's minimum) so the owl can flap
+    // while a turn runs; otherwise the line only redraws on events.
     let mut line = serde_json::json!({
         "type": "command",
         "command": command_for(exe, chained),
+        "refreshInterval": OWL_REFRESH_SECS,
     });
-    // Keep the chained line's layout knobs so it renders as it did.
+    // Keep the chained line's padding so it renders as it did. Its own
+    // refresh interval can only be slower than ours, so ours wins.
     if chained {
         let prev =
             read_json(Some(chain_path.to_path_buf())).and_then(|r| r.get("previous").cloned());
-        for key in ["padding", "refreshInterval"] {
-            if let Some(v) = prev.as_ref().and_then(|p| p.get(key)) {
-                line[key] = v.clone();
-            }
+        if let Some(v) = prev.as_ref().and_then(|p| p.get("padding")) {
+            line["padding"] = v.clone();
         }
     }
     settings
@@ -823,6 +966,29 @@ fn install_claude_at(settings_path: &Path, chain_path: &Path, exe: &str) -> Resu
         .ok_or_else(|| anyhow!("settings is not an object"))?
         .insert("statusLine".into(), line);
     write_claude_settings(settings_path, &settings)
+}
+
+/// Installs from before the owl have no `refreshInterval`, so Claude Code
+/// only repaints on events and the owl can't flap. Add it once. A no-op when
+/// the status line isn't ours or already has an interval (the user's own
+/// choice wins).
+fn ensure_refresh_at(settings_path: &Path) -> Result<bool> {
+    let mut settings = read_claude_settings(settings_path)?;
+    if !status_command(&settings).is_some_and(|c| is_ours(&c)) {
+        return Ok(false);
+    }
+    let Some(line) = settings
+        .get_mut("statusLine")
+        .and_then(Value::as_object_mut)
+    else {
+        return Ok(false);
+    };
+    if line.contains_key("refreshInterval") {
+        return Ok(false);
+    }
+    line.insert("refreshInterval".into(), OWL_REFRESH_SECS.into());
+    write_claude_settings(settings_path, &settings)?;
+    Ok(true)
 }
 
 fn uninstall_claude_at(settings_path: &Path, chain_path: &Path) -> Result<()> {
@@ -1012,6 +1178,21 @@ pub fn set_claude(enabled: bool) -> Result<()> {
     }
 }
 
+/// Run once at launch: bring an existing install up to the owl's refresh.
+pub fn ensure_refresh() {
+    let Some(path) = claude_settings_file() else {
+        return;
+    };
+    if !path.exists() {
+        return;
+    }
+    match ensure_refresh_at(&path) {
+        Ok(true) => crate::elog!(info, "statusline", "added refreshInterval to Claude Code status line"),
+        Ok(false) => {}
+        Err(e) => crate::elog!(warn, "statusline", "couldn't add refreshInterval: {e}"),
+    }
+}
+
 pub fn set_codex(enabled: bool) -> Result<()> {
     let config = codex_config_file().ok_or_else(|| anyhow!("no home directory"))?;
     let prev = codex_prev_file().ok_or_else(|| anyhow!("no config directory"))?;
@@ -1042,6 +1223,7 @@ pub fn preview(prefs: &StatuslinePrefs) -> Vec<StatuslineSpan> {
         ));
     }
     extras.today_usd.get_or_insert(4.21);
+    extras.working = true;
     let cwd = std::env::current_dir()
         .ok()
         .map(|d| d.display().to_string())
@@ -1117,13 +1299,14 @@ mod tests {
         ));
         assert_eq!(
             line,
-            "ctx ▓▓▓░░░░░░░ 34% 340K/1M │ 5h 41% │ wk 88% ↻3d │ Fable 63% │ $1.20 │ $4.21 today"
+            "/{o,o}\\ ctx ▓▓▓░░░░░░░ 34% 340K/1M │ 5h 41% │ wk 88% ↻3d │ Fable 63% │ $1.20 │ $4.21 today"
         );
     }
 
     #[test]
     fn follows_order_toggles_and_style_prefs() {
         let mut prefs = StatuslinePrefs::default();
+        prefs.owl = false;
         // Weekly first, context second, everything else off.
         prefs.segments = vec![
             StatuslineSegment {
@@ -1175,6 +1358,7 @@ mod tests {
     #[test]
     fn reset_hint_always_shows_even_when_low() {
         let mut prefs = StatuslinePrefs::default();
+        prefs.owl = false;
         prefs.segments = vec![StatuslineSegment {
             id: StatuslineSegmentId::FiveHour,
             enabled: true,
@@ -1199,8 +1383,70 @@ mod tests {
         // Weekly, Fable and both costs have no data here and drop out.
         assert_eq!(
             text(&render_spans(&input, &extras, &StatuslinePrefs::default())),
-            "ctx — │ 5h 12%"
+            "/{o,o}\\ ctx — │ 5h 12%"
         );
+    }
+
+    #[test]
+    fn owl_rests_when_idle_and_flaps_when_working() {
+        let mut prefs = StatuslinePrefs::default();
+        prefs.segments = vec![StatuslineSegment {
+            id: StatuslineSegmentId::SessionCost,
+            enabled: true,
+        }];
+        let idle = render_spans(&sample(), &Extras::default(), &prefs);
+        assert_eq!(text(&idle), "/{o,o}\\ $1.20");
+        assert_eq!(idle[0].tone, StatuslineTone::Dim);
+
+        let working = Extras {
+            working: true,
+            ..Default::default()
+        };
+        let spans = render_spans(&sample(), &working, &prefs);
+        assert!(OWL_FLAP.contains(&spans[0].text.as_str()));
+        assert_eq!(spans[0].tone, StatuslineTone::Plain);
+        // Every frame is the resting owl's width, so the line never shifts.
+        assert!(OWL_FLAP.iter().all(|f| f.chars().count() == OWL_IDLE.chars().count()));
+        assert_ne!(owl_frame(0), owl_frame(1));
+
+        prefs.owl = false;
+        assert_eq!(text(&render_spans(&sample(), &working, &prefs)), "$1.20");
+    }
+
+    #[test]
+    fn turn_state_from_transcript_tail() {
+        let lines = |ls: &[&str]| ls.iter().map(|l| l.to_string()).collect::<Vec<_>>();
+        let prompt = r#"{"type":"user","message":{"role":"user","content":"fix the test"}}"#;
+        let tool_use = r#"{"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"Bash"}]}}"#;
+        let tool_result = r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}"#;
+        let done = r#"{"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"Done."}]}}"#;
+        let turn_end = r#"{"type":"system","subtype":"turn_duration"}"#;
+        let noise = r#"{"type":"cost-state"}"#;
+        let sidechain = r#"{"type":"user","isSidechain":true,"message":{"content":"x"}}"#;
+        let ask = r#"{"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"AskUserQuestion"}]}}"#;
+        let interrupt = r#"{"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#;
+
+        assert_eq!(turn_in_progress(&lines(&[prompt])), Some(true));
+        assert_eq!(turn_in_progress(&lines(&[prompt, tool_use, noise])), Some(true));
+        assert_eq!(turn_in_progress(&lines(&[tool_use, tool_result])), Some(true));
+        assert_eq!(turn_in_progress(&lines(&[tool_result, done])), Some(false));
+        assert_eq!(turn_in_progress(&lines(&[done, turn_end, noise, noise])), Some(false));
+        assert_eq!(turn_in_progress(&lines(&[done, sidechain])), Some(false));
+        assert_eq!(turn_in_progress(&lines(&[prompt, ask])), Some(false));
+        assert_eq!(turn_in_progress(&lines(&[tool_use, interrupt])), Some(false));
+        assert_eq!(turn_in_progress(&lines(&[noise, "not json"])), None);
+    }
+
+    #[test]
+    fn working_reads_the_transcript_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let t = dir.path().join("s.jsonl");
+        std::fs::write(&t, "{\"type\":\"user\",\"message\":{\"content\":\"go\"}}\n").unwrap();
+        let input = serde_json::json!({ "transcript_path": t.display().to_string() });
+        assert!(session_working(&input));
+        std::fs::write(&t, "{\"type\":\"system\",\"subtype\":\"turn_duration\"}\n").unwrap();
+        assert!(!session_working(&input));
+        assert!(!session_working(&serde_json::json!({})));
     }
 
     #[test]
@@ -1323,6 +1569,7 @@ mod tests {
         install_claude_at(&settings, &chain, "/Apps/LunoPeak").unwrap();
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
         assert_eq!(v["statusLine"]["command"], "'/Apps/LunoPeak' statusline");
+        assert_eq!(v["statusLine"]["refreshInterval"], 1);
         assert_eq!(v["model"], "opus");
         assert!(!chain.exists());
         // Key order is preserved: the user's keys stay first.
@@ -1333,6 +1580,31 @@ mod tests {
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
         assert!(v.get("statusLine").is_none());
         assert_eq!(v["env"]["A"], "1");
+    }
+
+    #[test]
+    fn refresh_interval_added_once_to_older_installs() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = dir.path().join("settings.json");
+        std::fs::write(
+            &settings,
+            r#"{"statusLine":{"type":"command","command":"'/Applications/LunoPeak.app/Contents/MacOS/LunoPeak' statusline"}}"#,
+        )
+        .unwrap();
+        assert!(ensure_refresh_at(&settings).unwrap());
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        assert_eq!(v["statusLine"]["refreshInterval"], 1);
+        assert!(!ensure_refresh_at(&settings).unwrap());
+
+        // Someone else's status line, or ours with the user's own interval, is left alone.
+        std::fs::write(&settings, r#"{"statusLine":{"type":"command","command":"ccstatusline"}}"#).unwrap();
+        assert!(!ensure_refresh_at(&settings).unwrap());
+        std::fs::write(
+            &settings,
+            r#"{"statusLine":{"type":"command","command":"'/Apps/LunoPeak' statusline","refreshInterval":5}}"#,
+        )
+        .unwrap();
+        assert!(!ensure_refresh_at(&settings).unwrap());
     }
 
     #[test]

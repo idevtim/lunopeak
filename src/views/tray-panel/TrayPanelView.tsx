@@ -803,12 +803,17 @@ function RunningRow({ ctx }: { ctx: LiveContext }) {
   const title = contextTitle(ctx);
   const folder = contextFolder(ctx);
   const distinctFolder = folder && folder !== title ? folder : null;
-  const busy = ctx.status === "busy";
+  // Background subagents keep a session working after its main chat idles.
+  const busy = ctx.status === "busy" || ctx.subagentsRunning > 0;
   const full = ctx.usedPercent != null && ctx.usedPercent >= CONTEXT_DANGER_PCT;
   const state = busy ? "Working" : ctx.status === "idle" ? "Idle" : null;
+  const subagents =
+    ctx.subagentsRunning > 0
+      ? `${ctx.subagentsRunning} subagent${ctx.subagentsRunning === 1 ? "" : "s"}`
+      : null;
   const subline = full
     ? "Almost full — start a new chat soon"
-    : [state, distinctFolder].filter(Boolean).join(" · ") || providerLabel(ctx.agent);
+    : [state, subagents, distinctFolder].filter(Boolean).join(" · ") || providerLabel(ctx.agent);
   return (
     <li
       title={[

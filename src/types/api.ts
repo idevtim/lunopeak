@@ -184,6 +184,8 @@ export interface StatuslinePrefs {
   dangerPercent: number;
   resetHint: "nearLimit" | "always" | "never";
   separator: "bar" | "dot" | "pipe" | "space";
+  /** LunoPeak's owl at the start of the line, flapping while Claude works. */
+  owl: boolean;
 }
 
 export type StatuslineTone = "plain" | "dim" | "ok" | "warn" | "danger";
@@ -286,10 +288,25 @@ export interface SessionDetail {
   costUsd: number;
   subagentCount: number;
   subagentCostUsd: number;
+  /** One row per subagent run, in start order. */
+  subagents: SubagentRun[];
   usage: TokenUsage;
   firstPrompt: string | null;
   filesModified: string[];
   events: SessionEvent[];
+}
+
+/** A subagent inside a session replay. */
+export interface SubagentRun {
+  id: string;
+  agentType: string | null;
+  description: string | null;
+  model: string | null;
+  startedTs: number;
+  endTs: number;
+  toolCalls: number;
+  costUsd: number;
+  finished: boolean;
 }
 
 /** A transcript with full-text search hits (`search_transcripts`). */
@@ -370,6 +387,9 @@ export interface LiveEvent {
   tool: string;
   summary: string;
   agent: LiveAgent;
+  /** Set when a Claude subagent made this call: its id and task description. */
+  subagentId: string | null;
+  subagent: string | null;
 }
 
 export type TodoStatus = "pending" | "in_progress" | "completed";
@@ -387,6 +407,23 @@ export interface SessionLiveState {
   lastSummary: string | null;
   todos: LiveTodo[];
   agent: LiveAgent;
+  /** Claude subagents running or finished within the live window, running first. */
+  subagents: LiveSubagent[];
+}
+
+/** One Claude Code subagent run (`<session>/subagents/agent-<id>.jsonl`). */
+export interface LiveSubagent {
+  id: string;
+  /** "general-purpose", "Explore", "Plan", or a custom agent's name. */
+  agentType: string | null;
+  /** The short task description the parent gave it. */
+  description: string | null;
+  model: string | null;
+  status: "running" | "done";
+  startedTs: number;
+  lastTs: number;
+  lastTool: string | null;
+  lastSummary: string | null;
 }
 
 export interface LiveActivity {
@@ -412,6 +449,8 @@ export interface LiveContext {
   status: "busy" | "idle" | null;
   /** Epoch ms of the latest activity seen for this session. */
   lastTs: number;
+  /** Claude subagents this session has running right now. */
+  subagentsRunning: number;
 }
 
 /** Claude Code `statusLine` integration state. */

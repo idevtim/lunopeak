@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, History, Search } from "lucide-react";
+import { Bot, ChevronRight, History, Search } from "lucide-react";
 import { queries } from "@/lib/queries";
 import { useDelayedLoading } from "@/hooks/useDelayedLoading";
 import { useHashRoute } from "@/hooks/useHashRoute";
@@ -57,8 +57,11 @@ export function SessionsView() {
 
   const running = useMemo(
     () =>
-      new Set(
-        (live.data ?? []).filter((c) => c.agent === "claude").map((c) => c.sessionId),
+      // Session id → subagents it has running right now.
+      new Map(
+        (live.data ?? [])
+          .filter((c) => c.agent === "claude")
+          .map((c) => [c.sessionId, c.subagentsRunning] as const),
       ),
     [live.data],
   );
@@ -147,6 +150,7 @@ export function SessionsView() {
                       key={s.id}
                       session={s}
                       running={running.has(s.id)}
+                      subagentsRunning={running.get(s.id) ?? 0}
                       onOpen={() => navigateTo("session-replay", { id: s.id })}
                     />
                   ))}
@@ -206,10 +210,12 @@ function Lead({ sessions, all, range }: { sessions: Session[]; all: Session[]; r
 function SessionRow({
   session: s,
   running,
+  subagentsRunning,
   onOpen,
 }: {
   session: Session;
   running: boolean;
+  subagentsRunning: number;
   onOpen: () => void;
 }) {
   const meta = sessionMeta(s);
@@ -238,6 +244,14 @@ function SessionRow({
               </span>
             ),
             meta.model,
+            s.subagentCount > 0 && (
+              <span key="s" title={`Handed work to ${plural(s.subagentCount, "subagent")}`}>
+                <Bot size={11} strokeWidth={2} className="mb-px mr-0.5 inline" />
+                {subagentsRunning > 0
+                  ? `${subagentsRunning} of ${plural(Math.max(s.subagentCount, subagentsRunning), "subagent")} working`
+                  : plural(s.subagentCount, "subagent")}
+              </span>
+            ),
           ]
             .filter(Boolean)
             .map((part, i) => (
