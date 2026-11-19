@@ -20,7 +20,9 @@ $ReleaseTarget = 'main'                    # branch on $ReleaseRepo to tag
 # running an x64 PowerShell (via Prism), the host is amd64.
 $hostArch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
 $Targets = @(
-  [pscustomobject]@{ Triple = 'aarch64-pc-windows-msvc'; Arch = 'arm64'; RustArch = 'aarch64'; Machine = 0xAA64; VcvarsArg = "${hostArch}_arm64" },
+  # Native arm64 host takes a bare 'arm64': vcvarsall rejects 'arm64_arm64'
+  # (yet still exits 0), which leaves INCLUDE empty.
+  [pscustomobject]@{ Triple = 'aarch64-pc-windows-msvc'; Arch = 'arm64'; RustArch = 'aarch64'; Machine = 0xAA64; VcvarsArg = if ($hostArch -eq 'arm64') { 'arm64' } else { 'amd64_arm64' } },
   [pscustomobject]@{ Triple = 'x86_64-pc-windows-msvc';  Arch = 'x64';   RustArch = 'x86_64';  Machine = 0x8664; VcvarsArg = if ($hostArch -eq 'amd64') { 'amd64' } else { 'arm64_amd64' } }
 )
 
@@ -35,8 +37,15 @@ function Import-VsDevEnv {
   if (-not $vsRoot) { throw 'Visual Studio installation not found via vswhere' }
   $vcvars = Join-Path $vsRoot 'VC\Auxiliary\Build\vcvarsall.bat'
   if (-not (Test-Path $vcvars)) { throw "vcvarsall.bat not found at $vcvars" }
-  $output = & cmd /c "`"$vcvars`" $Arch >nul && set"
+  $output = & cmd /c "`"$vcvars`" $Arch && set"
   if ($LASTEXITCODE -ne 0) { throw "vcvarsall.bat $Arch failed (exit $LASTEXITCODE)" }
+  # vcvarsall exits 0 even on a bad argument; its only tell is an [ERROR:...]
+  # line and an unset INCLUDE. Check both rather than trusting the exit code.
+  $errors = $output | Where-Object { $_ -match '^\[ERROR:' }
+  if ($errors -or -not ($output | Where-Object { $_ -match '^INCLUDE=.+' })) {
+    $errors | ForEach-Object { Write-Host "    $_" }
+    throw "vcvarsall.bat $Arch did not set INCLUDE - check the arch argument and that the MSVC build tools for it are installed"
+  }
   foreach ($line in $output) {
     if ($line -match '^([^=]+)=(.*)$') {
       [Environment]::SetEnvironmentVariable($matches[1], $matches[2])
