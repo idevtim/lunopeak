@@ -30,13 +30,13 @@ All builds auto-update except Linux RPM (manual). What changed in each version i
 - **Dashboard** — every active repo, session, and agent at a glance
 - **Assistant** — built-in chat with full awareness of your environment, across Anthropic, OpenAI, Gemini, xAI, and local Ollama models
 - **Menu bar** — every provider's plan limits on one screen, live sessions with context fill, update badge, and its own settings
-- **Terminal** — context fill, plan limits, and cost in your Claude Code status line; built-in items for Codex
+- **Terminal** — context fill, plan limits, and cost in your Claude Code status line, led by an owl that flaps while Claude is working; built-in items for Codex
 - **⌘K** — jump to any page or action from anywhere
 
 ### Activity & Sessions
-- **Live View** — Claude Code, Codex, and Cursor sessions in real time, each process matched to its own transcript, with per-session context fill
+- **Live View** — Claude Code, Codex, and Cursor sessions in real time, each process matched to its own transcript, with per-session context fill and every Claude subagent's task and latest step
 - **Sessions History** — every past session with timing, repo, and outcomes
-- **Session Replay** — step through any session turn-by-turn
+- **Session Replay** — step through any session turn-by-turn, with each subagent run and what it cost
 - **Transcripts** — full-text search across every conversation
 - **Tools** — which tools each session used, how often
 - **Costs** — token spend per session, repo, and provider, subagents included, with budget alerts
