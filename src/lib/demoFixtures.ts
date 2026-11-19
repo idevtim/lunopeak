@@ -753,6 +753,7 @@ export function previewStatusline(prefs: StatuslinePrefs): StatuslineSpan[] {
       { text: "main", tone: "plain" },
     ],
   };
+  if (prefs.owl) out.push({ text: "\\{o,o}/", tone: "plain" }, { text: " ", tone: "plain" });
   prefs.segments
     .filter((s) => s.enabled)
     .forEach((s, i) => {

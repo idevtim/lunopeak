@@ -20,4 +20,8 @@ export const defaultStatuslinePrefs: StatuslinePrefs = {
   dangerPercent: 85,
   resetHint: "nearLimit",
   separator: "bar",
+  owl: true,
 };
+
+/** Mirrors `OWL_FLAP` in `src-tauri/src/statusline.rs`: one frame a second while working. */
+export const OWL_FLAP = ["\\{o,o}/", "/{o,o}\\", "\\{o,o}/", "/{o,o}\\", "\\{o,o}/", "/{-,-}\\"];

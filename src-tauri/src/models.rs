@@ -430,6 +430,8 @@ pub struct StatuslinePrefs {
     pub danger_percent: u8,
     pub reset_hint: StatuslineResetHint,
     pub separator: StatuslineSeparator,
+    /// LunoPeak's owl at the start of the line, flapping while Claude works.
+    pub owl: bool,
 }
 
 impl Default for StatuslinePrefs {
@@ -446,6 +448,7 @@ impl Default for StatuslinePrefs {
             danger_percent: 85,
             reset_hint: StatuslineResetHint::default(),
             separator: StatuslineSeparator::default(),
+            owl: true,
         }
     }
 }

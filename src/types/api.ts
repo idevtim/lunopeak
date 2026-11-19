@@ -184,6 +184,8 @@ export interface StatuslinePrefs {
   dangerPercent: number;
   resetHint: "nearLimit" | "always" | "never";
   separator: "bar" | "dot" | "pipe" | "space";
+  /** LunoPeak's owl at the start of the line, flapping while Claude works. */
+  owl: boolean;
 }
 
 export type StatuslineTone = "plain" | "dim" | "ok" | "warn" | "danger";

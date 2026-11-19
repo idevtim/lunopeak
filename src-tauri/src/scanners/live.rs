@@ -446,7 +446,7 @@ fn scan_subagent(path: &Path) -> Option<SubagentRunScan> {
 
 /// Subagents still running under the session whose main transcript is
 /// `transcript` — the `<session-id>/subagents/` folder beside it.
-fn running_subagents(transcript: &Path) -> u32 {
+pub(crate) fn running_subagents(transcript: &Path) -> u32 {
     let cutoff = SystemTime::now()
         .checked_sub(RECENT_WINDOW)
         .unwrap_or(SystemTime::UNIX_EPOCH);
