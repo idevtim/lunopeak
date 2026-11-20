@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { ChevronLeft } from "lucide-react";
-import { PageHeader, Card, CardHeader, Mono } from "@/components/ui/Page";
+import { Page, PageHeader, Card, CardHeader, Mono } from "@/components/ui/Page";
 import { StatCard } from "@/components/ui/StatCard";
 import { Button } from "@/components/ui/Button";
 import { formatRelativeTime, formatUsd, plural } from "@/lib/format";
@@ -14,7 +14,6 @@ import {
   CodeFrequency,
   Committers,
   HintSkeleton,
-  InsightsPage,
   MergedPrList,
   PeriodBars,
   PrListSkeleton,
@@ -53,7 +52,7 @@ export function RepoInsightDetail({
   const fetchedLongAgo = repo.lastFetchMs != null && data.untilMs - repo.lastFetchMs > 24 * 3_600_000;
 
   return (
-    <InsightsPage>
+    <Page>
       <PageHeader
         above={
           <button
@@ -212,6 +211,6 @@ export function RepoInsightDetail({
           <CodeFrequency data={data} additions={repo.additionsByBucket} deletions={repo.deletionsByBucket} />
         </ChartCard>
       )}
-    </InsightsPage>
+    </Page>
   );
 }
