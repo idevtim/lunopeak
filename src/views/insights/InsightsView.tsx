@@ -255,7 +255,8 @@ function AllRepos({
           }
         >
           <BarChart
-            height={170}
+            height="fill"
+            minFillHeight={170}
             showLabels={n <= 14}
             gapClassName={n > 14 ? "gap-[3px]" : "gap-2"}
             axisLabels={{ left: labels[0], right: labels[n - 1] }}

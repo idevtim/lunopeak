@@ -39,7 +39,7 @@ export function ChartCard({
     <Card className={cn("flex min-w-0 flex-col", className)}>
       <CardHeader title={title} meta={meta} />
       {sub && <p className="m-0 -mt-1.5 px-[18px] pb-2 text-xs text-zinc-500 dark:text-zinc-400">{sub}</p>}
-      <div className="flex-1 px-[18px] pb-4">{children}</div>
+      <div className="flex flex-1 flex-col px-[18px] pb-4">{children}</div>
     </Card>
   );
 }

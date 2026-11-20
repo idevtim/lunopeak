@@ -21,7 +21,12 @@ interface BarChartProps {
   data: BarDatum[];
   /** Tailwind class for the bar fill, e.g. "bg-blue-500". */
   barClassName?: string;
-  height?: number;
+  /**
+   * Plot height in px, or "fill" to take the rest of a flex-column parent
+   * (at least `minFillHeight`) — for a chart beside a taller card.
+   */
+  height?: number | "fill";
+  minFillHeight?: number;
   className?: string;
   showLabels?: boolean;
   /** Tailwind gap class between bars. Tight default for that "Sonoma activity row" feel. */
@@ -36,6 +41,7 @@ export function BarChart({
   data,
   barClassName = "bg-blue-500",
   height = 96,
+  minFillHeight = 140,
   className,
   showLabels = true,
   gapClassName = "gap-[3px]",
@@ -46,10 +52,10 @@ export function BarChart({
   const [hovered, setHovered] = useState<number | null>(null);
 
   return (
-    <div className={cn("w-full", className)}>
+    <div className={cn("w-full", height === "fill" && "flex min-h-0 flex-1 flex-col", className)}>
       <div
-        className={cn("relative flex items-end", gapClassName)}
-        style={{ height }}
+        className={cn("relative flex items-end", height === "fill" && "flex-1", gapClassName)}
+        style={height === "fill" ? { minHeight: minFillHeight } : { height }}
         role="img"
         aria-label="Bar chart"
         onMouseLeave={() => setHovered(null)}
