@@ -51,18 +51,22 @@ export function PeriodBars({
   barClassName,
   tooltip,
   height = 120,
+  minFillHeight,
 }: {
   data: RepoInsights;
   values: number[];
   barClassName: string;
   tooltip: (value: number, label: string, i: number) => string;
-  height?: number;
+  /** Px, or "fill" to grow into a flex-column parent (at least `minFillHeight`). */
+  height?: number | "fill";
+  minFillHeight?: number;
 }) {
   const n = data.buckets.length;
   const labels = data.buckets.map((b) => bucketLabel(b, data.bucketUnit, n));
   return (
     <BarChart
       height={height}
+      minFillHeight={minFillHeight}
       barClassName={barClassName}
       showLabels={n <= 14}
       gapClassName={n > 14 ? "gap-[3px]" : "gap-2"}
@@ -74,14 +78,16 @@ export function PeriodBars({
 
 export function CodeFrequency({ data, additions, deletions }: { data: RepoInsights; additions: number[]; deletions: number[] }) {
   return (
-    <div className="flex flex-col gap-3">
-      <div>
+    // Fills a card stretched by its neighbour; Added keeps about twice
+    // Deleted's height, and neither shrinks below its old fixed size.
+    <div className="flex flex-1 flex-col gap-3">
+      <div className="flex flex-[2] flex-col">
         <div className="mb-1 text-[11px] font-medium text-teal-700 dark:text-teal-300">Added</div>
-        <PeriodBars data={data} values={additions} barClassName="bg-teal-500" height={90} tooltip={(v, l) => `${l}: +${nf.format(v)} lines`} />
+        <PeriodBars data={data} values={additions} barClassName="bg-teal-500" height="fill" minFillHeight={90} tooltip={(v, l) => `${l}: +${nf.format(v)} lines`} />
       </div>
-      <div>
+      <div className="flex flex-1 flex-col">
         <div className="mb-1 text-[11px] font-medium text-orange-700 dark:text-orange-300">Deleted</div>
-        <PeriodBars data={data} values={deletions} barClassName="bg-orange-400" height={44} tooltip={(v, l) => `${l}: −${nf.format(v)} lines`} />
+        <PeriodBars data={data} values={deletions} barClassName="bg-orange-400" height="fill" minFillHeight={44} tooltip={(v, l) => `${l}: −${nf.format(v)} lines`} />
       </div>
     </div>
   );
