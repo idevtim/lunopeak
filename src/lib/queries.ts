@@ -208,6 +208,21 @@ export const queries = {
     staleTime: 5 * 60 * 1000,
   },
 
+  // Cross-repo Insights. Git stats are local and quick; PR stats shell
+  // out to `gh` per GitHub repo, so they get their own query and paint
+  // after the rest of the page.
+  repoInsights: (days: number) => ({
+    queryKey: ["repo-insights", days] as const,
+    queryFn: () => api.getRepoInsights(days),
+    staleTime: 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
+  }),
+  prInsights: (days: number) => ({
+    queryKey: ["pr-insights", days] as const,
+    queryFn: () => api.getPrInsights(days),
+    staleTime: 5 * 60 * 1000,
+  }),
+
   // Phase 4
   toolStats: (project: string | null, days: number | null = null) => ({
     queryKey: ["tool-stats", project, days] as const,

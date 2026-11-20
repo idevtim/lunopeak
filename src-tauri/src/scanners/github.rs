@@ -66,7 +66,7 @@ pub fn status() -> GithubStatus {
 
 /// `(owner, name)` for the `origin` remote, when it points at github.com.
 /// Returns None for non-GitHub remotes, missing remotes, or git errors.
-fn read_github_origin(repo: &Path) -> Option<(String, String)> {
+pub(crate) fn read_github_origin(repo: &Path) -> Option<(String, String)> {
     let out = Command::new("git")
         .no_window()
         .arg("-C")
@@ -208,7 +208,7 @@ fn gh_list_prs(owner: &str, repo: &str) -> Vec<RawPr> {
     serde_json::from_slice(&out.stdout).unwrap_or_default()
 }
 
-fn parse_iso_to_ms(s: &str) -> Option<i64> {
+pub(crate) fn parse_iso_to_ms(s: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(s)
         .ok()
         .map(|dt| dt.timestamp_millis())

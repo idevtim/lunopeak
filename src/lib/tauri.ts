@@ -28,7 +28,9 @@ import type {
   LogEntry,
   DashboardSummary,
   PullRequestList,
+  PrInsights,
   Repo,
+  RepoInsights,
   RepoActivity,
   RepoDetail,
   ReposOverview,
@@ -254,6 +256,12 @@ export const api = {
     call<RepoActivity[]>("get_repo_activity", undefined, demo.repoActivity),
   getPullRequests: () =>
     call<PullRequestList>("get_pull_requests", undefined, demo.pullRequests),
+  /** Git activity across all tracked repos for the last `days` days (local, no network). */
+  getRepoInsights: (days: number) =>
+    call<RepoInsights>("get_repo_insights", { days }, demo.repoInsights(days)),
+  /** PR activity via `gh` for the same period. Cached 5 min in Rust unless `force`. */
+  getPrInsights: (days: number, force = false) =>
+    call<PrInsights>("get_pr_insights", { days, force }, demo.prInsights(days)),
 
   // Phase 4
   /** `days` limits the breakdowns to sessions started in the last N days; null = all time. */

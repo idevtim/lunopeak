@@ -5,7 +5,7 @@ use crate::models::{
     RepoCostDetail, RepoDetail, RepoOverviewEntry, RepoSetup, RepoStash, ReposOverview, Session,
     SessionDetail, SessionStats, Settings, SetupOverview, Snapshot, TimelineEvent, ToolStats,
     TranscriptMatch,
-    UsageLimits, WorktreeEntry,
+    UsageLimits, WorktreeEntry, RepoInsights, PrInsights,
 };
 use crate::process_ext::NoWindow;
 use crate::scanners::codex::Cache as CodexCache;
@@ -219,6 +219,14 @@ impl GithubCache {
         list
     }
 }
+
+/// `gh`-backed PR insights, per period length. Each refresh costs one `gh`
+/// call per GitHub repo (seconds each), so switching periods back and forth
+/// reuses results for a few minutes.
+#[derive(Clone, Default)]
+pub struct InsightsPrCache(Arc<Mutex<std::collections::HashMap<u32, (Instant, PrInsights)>>>);
+
+const INSIGHTS_PR_TTL: Duration = Duration::from_secs(300);
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -1878,6 +1886,63 @@ pub async fn get_pull_requests(
     blocking(move || {
         let repos = repo_index(&app, &settings_cache, &repo_cache)?;
         Ok(github_cache.get_or_fetch(&repos))
+    })
+    .await
+}
+
+/// Git activity across all tracked repos for the last `days` days.
+#[tauri::command]
+pub async fn get_repo_insights(
+    app: AppHandle,
+    days: u32,
+    sessions: State<'_, SessionsCache>,
+    settings_cache: State<'_, SettingsCache>,
+    repo_cache: State<'_, RepoCache>,
+) -> Result<RepoInsights, String> {
+    let claude_on = claude_enabled(&app, settings_cache.inner());
+    let sessions_cache = sessions.inner().clone();
+    let settings_cache = settings_cache.inner().clone();
+    let repo_cache = repo_cache.inner().clone();
+    blocking(move || {
+        let repos = repo_index(&app, &settings_cache, &repo_cache)?;
+        let sessions = if claude_on {
+            scanners::sessions::scan_all(&sessions_cache).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        Ok(scanners::insights::collect(&repos, days, &sessions))
+    })
+    .await
+}
+
+/// Pull request activity from `gh` for the same period. `force` skips the cache.
+#[tauri::command]
+pub async fn get_pr_insights(
+    app: AppHandle,
+    days: u32,
+    force: Option<bool>,
+    settings_cache: State<'_, SettingsCache>,
+    repo_cache: State<'_, RepoCache>,
+    github_cache: State<'_, GithubCache>,
+    pr_cache: State<'_, InsightsPrCache>,
+) -> Result<PrInsights, String> {
+    let settings_cache = settings_cache.inner().clone();
+    let repo_cache = repo_cache.inner().clone();
+    let github_cache = github_cache.inner().clone();
+    let pr_cache = pr_cache.inner().clone();
+    blocking(move || {
+        if !force.unwrap_or(false) {
+            if let Some((t, hit)) = pr_cache.0.lock().unwrap().get(&days) {
+                if t.elapsed() < INSIGHTS_PR_TTL {
+                    return Ok(hit.clone());
+                }
+            }
+        }
+        let repos = repo_index(&app, &settings_cache, &repo_cache)?;
+        let open = github_cache.get_or_fetch(&repos);
+        let result = scanners::insights::collect_prs(&repos, days, &open);
+        pr_cache.0.lock().unwrap().insert(days, (Instant::now(), result.clone()));
+        Ok(result)
     })
     .await
 }

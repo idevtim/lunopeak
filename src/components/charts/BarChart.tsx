@@ -10,6 +10,11 @@ export interface BarDatum {
   className?: string;
   /** Renders an empty dotted slot instead of a bar (days still to come). */
   placeholder?: boolean;
+  /**
+   * Stack the bar from these parts, bottom first. `value` should be their
+   * sum; each part takes its share of the bar's height.
+   */
+  segments?: { value: number; className: string }[];
 }
 
 interface BarChartProps {
@@ -82,13 +87,21 @@ export function BarChart({
                   "w-full origin-bottom rounded-t-sm animate-chart-bar-grow transition-opacity",
                   isHovered ? "opacity-100" : "group-hover:opacity-80",
                   hovered !== null && !isHovered && "opacity-50",
-                  d.className ?? barClassName,
+                  d.segments
+                    ? "flex flex-col-reverse gap-px overflow-hidden"
+                    : (d.className ?? barClassName),
                 )}
                 style={{
                   height: `${Math.max(2, pct)}%`,
                   animationDelay: `${Math.min(i * 12, 400)}ms`,
                 }}
-              />
+              >
+                {d.segments
+                  ?.filter((s) => s.value > 0)
+                  .map((s, j) => (
+                    <div key={j} className={cn("min-h-px", s.className)} style={{ flexGrow: s.value }} />
+                  ))}
+              </div>
               {isHovered && (
                 <div
                   className={cn(
