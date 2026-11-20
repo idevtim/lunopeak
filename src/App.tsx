@@ -33,6 +33,7 @@ import { CostsSkeleton } from "@/views/costs/CostsSkeleton";
 import { SessionsSkeleton } from "@/views/sessions/SessionsSkeleton";
 import { LiveSkeleton } from "@/views/live/LiveSkeleton";
 import { exportDiagnostics, getAppVersion } from "@/lib/diagnostics";
+import { InsightsPageSkeleton } from "@/views/insights/parts";
 
 // Lazy-loaded views: each becomes its own chunk, so the initial bundle only
 // pays for the dashboard. Skeletons stay in the main bundle (small, shape-
@@ -91,6 +92,9 @@ const DiffsView = lazy(() =>
 const TimelineView = lazy(() =>
   import("@/views/timeline/TimelineView").then((m) => ({ default: m.TimelineView })),
 );
+const InsightsView = lazy(() =>
+  import("@/views/insights/InsightsView").then((m) => ({ default: m.InsightsView })),
+);
 const RepoPulseView = lazy(() =>
   import("@/views/repo-pulse/RepoPulseView").then((m) => ({ default: m.RepoPulseView })),
 );
@@ -126,6 +130,7 @@ const loadingCaption: Partial<Record<RouteId, string>> = {
   timeline: "Lining up commits and sessions…",
   diffs: "Collecting what each session changed…",
   "repo-pulse": "Checking which repos need a look…",
+  insights: "Reading git history across your repos…",
   setup: "Checking how your agents are set up…",
   skills: "Finding your skills…",
   agents: "Finding your subagents…",
@@ -161,6 +166,7 @@ function GenericViewSkeleton({ route }: { route: RouteId }) {
 const fallbackByRoute: Partial<Record<RouteId, () => React.ReactElement>> = {
   repos: () => <RepoListSkeleton />,
   "repo-detail": () => <RepoListSkeleton />,
+  insights: () => <InsightsPageSkeleton />,
   costs: () => <CostsSkeleton />,
   sessions: () => <SessionsSkeleton />,
   "session-replay": () => <SessionsSkeleton />,
@@ -188,6 +194,7 @@ const liveViews: Partial<Record<RouteId, () => React.ReactElement>> = {
   diffs: () => <DiffsView />,
   timeline: () => <TimelineView />,
   "repo-pulse": () => <RepoPulseView />,
+  insights: () => <InsightsView />,
   "work-graph": () => <WorkGraphView />,
   tools: () => <ToolsView />,
   deps: () => <DepsView />,

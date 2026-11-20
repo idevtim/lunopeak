@@ -168,6 +168,7 @@ const NAV_ITEMS: &[(&str, &str)] = &[
     ("timeline", "Timeline"),
     ("diffs", "Diffs"),
     ("repo-pulse", "Repo Pulse"),
+    ("insights", "Insights"),
     ("skills", "Skills"),
     ("agents", "Subagents"),
     ("memory", "Memory"),

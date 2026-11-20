@@ -2,6 +2,7 @@ import {
   Activity,
   Bot,
   Boxes,
+  ChartColumn,
   CircleDot,
   ClipboardList,
   Coins,
@@ -43,6 +44,7 @@ export type RouteId =
   | "repos"
   | "work-graph"
   | "repo-pulse"
+  | "insights"
   | "timeline"
   | "diffs"
   | "snapshots"
@@ -104,6 +106,7 @@ export const sections: RouteSection[] = [
     id: "projects",
     label: "Projects",
     routes: [
+      { id: "insights", label: "Insights", icon: ChartColumn, phase: 3 },
       { id: "repos", label: "Repos", icon: FolderGit2, phase: 1 },
       { id: "work-graph", label: "Work graph", icon: Network, phase: 3 },
       { id: "timeline", label: "Timeline", icon: GitBranch, phase: 3 },

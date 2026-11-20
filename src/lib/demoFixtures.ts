@@ -13,6 +13,10 @@
 
 import type {
   ActiveProcess,
+  InsightPr,
+  PrInsights,
+  RepoInsight,
+  RepoInsights,
   ClaudeMdEntry,
   ClaudeMdLintReport,
   ConfigArtifact,
@@ -1708,3 +1712,128 @@ export const demoConversations: Conversation[] = [
 
 /** Conversation that's selected by default when the demo seed is applied. */
 export const demoCurrentConversationId = demoConversations[0].id;
+
+
+// ---- Repo insights ----------------------------------------------------
+
+/** Deterministic 0..1 noise so browser-mode charts don't jump on refetch. */
+function noise(seed: number) {
+  const x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+/** Mirrors `scanners::insights::Period` (hour / calendar day / week buckets). */
+function insightBuckets(days: number): { unit: RepoInsights["bucketUnit"]; starts: number[] } {
+  const now = new Date();
+  if (days <= 1) {
+    const h = new Date(now);
+    h.setMinutes(0, 0, 0);
+    return { unit: "hour", starts: Array.from({ length: 24 }, (_, i) => h.getTime() - (23 - i) * 3_600_000) };
+  }
+  const midnight = (offset: number) => {
+    const d = new Date(now);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - offset);
+    return d.getTime();
+  };
+  if (days <= 31) return { unit: "day", starts: Array.from({ length: days }, (_, i) => midnight(days - 1 - i)) };
+  const weeks = Math.ceil(days / 7);
+  return { unit: "week", starts: Array.from({ length: weeks }, (_, i) => midnight((weeks - i) * 7 - 1)) };
+}
+
+// Weight per repo: how busy it is. The last two are quiet.
+const INSIGHT_WEIGHT = [9, 5, 3, 2, 1.2, 0.6, 0, 0];
+const INSIGHT_FILES = ["src/routes/index.ts", "src/lib/api.ts", "src/components/Table.tsx", "package.json", "README.md", "src/styles.css", "src/lib/auth.ts", "tests/api.test.ts"];
+
+export function repoInsights(days: number): RepoInsights {
+  const { unit, starts } = insightBuckets(days);
+  const perBucket = unit === "hour" ? 0.15 : unit === "week" ? 6 : 1;
+  const repos: RepoInsight[] = REPOS.map((r, ri) => {
+    const w = INSIGHT_WEIGHT[ri];
+    const commitsByBucket = starts.map((t, bi) => {
+      const weekend = unit === "day" && [0, 6].includes(new Date(t).getDay());
+      return Math.round(w * perBucket * noise(ri * 97 + bi + days) * (weekend ? 0.3 : 1.4));
+    });
+    const additionsByBucket = commitsByBucket.map((c, bi) => Math.round(c * (60 + 140 * noise(ri + bi * 7))));
+    const deletionsByBucket = additionsByBucket.map((a, bi) => Math.round(a * (0.1 + 0.3 * noise(bi + ri * 3))));
+    const commits = commitsByBucket.reduce((a, b) => a + b, 0);
+    const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+    const mate = Math.round(commits * 0.08);
+    return {
+      name: r.name,
+      path: repoPath(r.name),
+      refs: ["origin/main", "main"],
+      commits,
+      prevCommits: Math.round(commits * (0.7 + 0.5 * noise(ri + 5))),
+      allBranchCommits: commits + Math.round(commits * 0.06),
+      additions: sum(additionsByBucket),
+      deletions: sum(deletionsByBucket),
+      filesChanged: Math.round(commits * 2.4),
+      agentCommits: Math.round(commits * 0.7),
+      commitsByBucket,
+      additionsByBucket,
+      deletionsByBucket,
+      authors: commits === 0 ? [] : [
+        { name: "Timothy", email: "timothy@example.com", commits: commits - mate, additions: Math.round(sum(additionsByBucket) * 0.92), deletions: Math.round(sum(deletionsByBucket) * 0.9) },
+        ...(mate > 0 ? [{ name: "Riley", email: "riley@example.com", commits: mate, additions: Math.round(sum(additionsByBucket) * 0.08), deletions: Math.round(sum(deletionsByBucket) * 0.1) }] : []),
+      ],
+      hotFiles: commits === 0 ? [] : INSIGHT_FILES.slice(0, 6).map((path, fi) => ({
+        path,
+        commits: Math.max(1, Math.round(commits / (fi + 2))),
+        additions: 40 * (6 - fi),
+        deletions: 9 * (6 - fi),
+      })),
+      lastCommitMs: commits > 0 ? (NOW - ri * HOUR) * 1000 : (NOW - (20 + ri * 9) * DAY) * 1000,
+      lastFetchMs: (NOW - 25 * MIN) * 1000,
+      sessions: Math.round(commits * 0.6),
+      agentCostUsd: Math.round(commits * 0.6 * 1.7 * 100) / 100,
+    };
+  }).sort((a, b) => b.commits - a.commits);
+  return { days, sinceMs: starts[0], untilMs: Date.now(), bucketUnit: unit, buckets: starts, repos };
+}
+
+const INSIGHT_PR_TITLES = [
+  "Paginate the orders table on the server",
+  "Fix dark-mode contrast on the settings banner",
+  "Move the export job to a queue",
+  "Add retry with backoff to the webhook sender",
+  "Bulk-edit tags from the list view",
+  "Read deploy secrets from .env instead of the repo",
+  "Drop the legacy v1 search endpoint",
+  "Cache the pricing table for 10 minutes",
+];
+
+export function prInsights(days: number): PrInsights {
+  const { starts } = insightBuckets(days);
+  const end = Date.now();
+  const repos = REPOS.slice(0, 4).map((r, ri) => {
+    const count = Math.round(INSIGHT_WEIGHT[ri] * days * 0.45);
+    const merged: InsightPr[] = Array.from({ length: count }, (_, i) => {
+      const mergedAtMs = Math.round(starts[0] + (end - starts[0]) * noise(ri * 31 + i));
+      const openFor = (0.2 + 6 * noise(i + ri * 13) ** 2) * 3_600_000;
+      const n = 400 + ri * 100 + i;
+      return {
+        number: n,
+        title: INSIGHT_PR_TITLES[(i + ri) % INSIGHT_PR_TITLES.length],
+        url: `https://github.com/luno-labs/${r.name}/pull/${n}`,
+        author: i % 9 === 0 ? "riley" : "timothy",
+        createdAtMs: Math.round(mergedAtMs - openFor),
+        mergedAtMs,
+      };
+    }).sort((a, b) => b.mergedAtMs - a.mergedAtMs);
+    return {
+      name: r.name,
+      path: repoPath(r.name),
+      slug: `luno-labs/${r.name}`,
+      merged,
+      opened: count + (ri === 0 ? 2 : 0),
+      openNow: [3, 2, 1, 0][ri],
+      error: null,
+    };
+  });
+  return {
+    status: { installed: true, authenticated: true, user: "timothy", message: null },
+    githubRepoCount: 6,
+    repos,
+  };
+}

@@ -14,7 +14,7 @@ mod tray;
 mod tray_popover;
 mod updates;
 
-use commands::{AuditCache, GithubCache, RepoCache, SettingsCache};
+use commands::{AuditCache, GithubCache, InsightsPrCache, RepoCache, SettingsCache};
 use scanners::codex::Cache as CodexCache;
 use scanners::sessions::Cache as SessionsCache;
 #[cfg(target_os = "macos")]
@@ -116,6 +116,7 @@ pub fn run() {
         .manage(SessionsCache::new())
         .manage(CodexCache::new())
         .manage(GithubCache::default())
+        .manage(InsightsPrCache::default())
         .setup(move |app| {
             logger::init(app.handle());
             settings::ensure_config_dir(app.handle())?;
@@ -323,6 +324,8 @@ pub fn run() {
             commands::get_usage_limits,
             commands::get_provider_status,
             commands::get_pull_requests,
+            commands::get_repo_insights,
+            commands::get_pr_insights,
             commands::write_diagnostics_log,
             commands::append_log_entry,
             commands::read_diagnostics_log,

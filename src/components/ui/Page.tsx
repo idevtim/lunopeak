@@ -2,7 +2,8 @@ import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * The shared page frame: 1100px centered column with the standard header
+ * The shared page frame: centered column (up to 1480px, so a 16" MacBook
+ * window isn't left with ~190px gutters) with the standard header
  * spacing. Every routed view renders inside one of these.
  */
 export function Page({
@@ -17,7 +18,7 @@ export function Page({
     <div
       className={cn(
         "mx-auto flex w-full flex-col gap-5 px-8 pb-8 pt-11",
-        !wide && "max-w-[1100px]",
+        !wide && "max-w-[1480px]",
         className,
       )}
       {...props}

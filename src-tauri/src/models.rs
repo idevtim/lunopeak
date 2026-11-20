@@ -1623,3 +1623,110 @@ pub struct RepoDetail {
     pub claude_md: Option<String>,
     pub skills: Vec<ConfigArtifact>,
 }
+
+// ── Repo insights (cross-repo "Pulse") ─────────────────────────────────
+
+/// Git activity across every tracked repo for one period. Built from local
+/// `git log` only (no network), so it paints fast and works offline; PR
+/// numbers come separately in `PrInsights`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoInsights {
+    pub days: u32,
+    pub since_ms: i64,
+    pub until_ms: i64,
+    /// "hour" (24h period), "day" (up to 31 days) or "week".
+    pub bucket_unit: String,
+    /// Start of each chart bucket, ms since epoch, oldest first.
+    pub buckets: Vec<i64>,
+    pub repos: Vec<RepoInsight>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoInsight {
+    pub name: String,
+    pub path: String,
+    /// Refs counted as the default branch (e.g. `origin/main`, `main`).
+    pub refs: Vec<String>,
+    /// Non-merge commits on the default branch in the period.
+    pub commits: u32,
+    /// Same count for the equal-length period just before this one.
+    pub prev_commits: u32,
+    /// Non-merge commits on any local or remote branch in the period.
+    pub all_branch_commits: u32,
+    pub additions: u64,
+    pub deletions: u64,
+    pub files_changed: u32,
+    /// Commits whose `Co-authored-by` trailers name an AI agent. A lower
+    /// bound: agents don't always add the trailer.
+    pub agent_commits: u32,
+    pub commits_by_bucket: Vec<u32>,
+    pub additions_by_bucket: Vec<u64>,
+    pub deletions_by_bucket: Vec<u64>,
+    pub authors: Vec<InsightAuthor>,
+    pub hot_files: Vec<HotFile>,
+    /// Newest default-branch commit, in or before the period.
+    pub last_commit_ms: Option<i64>,
+    /// `.git/FETCH_HEAD` mtime — remote refs are only as fresh as this.
+    pub last_fetch_ms: Option<i64>,
+    /// Claude Code sessions started in this repo during the period.
+    pub sessions: u32,
+    pub agent_cost_usd: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InsightAuthor {
+    pub name: String,
+    pub email: String,
+    pub commits: u32,
+    pub additions: u64,
+    pub deletions: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HotFile {
+    pub path: String,
+    pub commits: u32,
+    pub additions: u64,
+    pub deletions: u64,
+}
+
+/// Pull request activity from `gh` for the same period as `RepoInsights`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrInsights {
+    pub status: GithubStatus,
+    pub github_repo_count: u32,
+    pub repos: Vec<RepoPrInsight>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoPrInsight {
+    pub name: String,
+    pub path: String,
+    /// "owner/name" on github.com.
+    pub slug: String,
+    /// Merged in the period, newest first.
+    pub merged: Vec<InsightPr>,
+    /// Opened in the period (any state now).
+    pub opened: u32,
+    /// Open right now.
+    pub open_now: u32,
+    /// Set when `gh` failed for this repo.
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InsightPr {
+    pub number: u32,
+    pub title: String,
+    pub url: String,
+    pub author: String,
+    pub created_at_ms: i64,
+    pub merged_at_ms: i64,
+}

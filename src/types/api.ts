@@ -1032,3 +1032,84 @@ export interface LogEntry {
   msg: string;
   detail?: string;
 }
+
+// ── Repo insights (cross-repo "Pulse") ─────────────────────────────────
+
+export type InsightBucketUnit = "hour" | "day" | "week";
+
+export interface RepoInsights {
+  days: number;
+  sinceMs: number;
+  untilMs: number;
+  bucketUnit: InsightBucketUnit;
+  /** Start of each chart bucket, ms since epoch, oldest first. */
+  buckets: number[];
+  repos: RepoInsight[];
+}
+
+export interface RepoInsight {
+  name: string;
+  path: string;
+  /** Refs counted as the default branch (e.g. `origin/main`, `main`). */
+  refs: string[];
+  commits: number;
+  prevCommits: number;
+  allBranchCommits: number;
+  additions: number;
+  deletions: number;
+  filesChanged: number;
+  /** Commits whose Co-authored-by trailers name an AI agent (a lower bound). */
+  agentCommits: number;
+  commitsByBucket: number[];
+  additionsByBucket: number[];
+  deletionsByBucket: number[];
+  authors: InsightAuthor[];
+  hotFiles: HotFile[];
+  lastCommitMs: number | null;
+  /** `.git/FETCH_HEAD` mtime — remote refs are only as fresh as this. */
+  lastFetchMs: number | null;
+  sessions: number;
+  agentCostUsd: number;
+}
+
+export interface InsightAuthor {
+  name: string;
+  email: string;
+  commits: number;
+  additions: number;
+  deletions: number;
+}
+
+export interface HotFile {
+  path: string;
+  commits: number;
+  additions: number;
+  deletions: number;
+}
+
+export interface PrInsights {
+  status: GithubStatus;
+  githubRepoCount: number;
+  repos: RepoPrInsight[];
+}
+
+export interface RepoPrInsight {
+  name: string;
+  path: string;
+  /** "owner/name" on github.com. */
+  slug: string;
+  /** Merged in the period, newest first. */
+  merged: InsightPr[];
+  opened: number;
+  openNow: number;
+  error: string | null;
+}
+
+export interface InsightPr {
+  number: number;
+  title: string;
+  url: string;
+  author: string;
+  createdAtMs: number;
+  mergedAtMs: number;
+}

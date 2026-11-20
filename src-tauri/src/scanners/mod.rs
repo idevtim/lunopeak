@@ -7,6 +7,7 @@ pub mod git;
 pub mod git_log;
 pub mod github;
 pub mod health;
+pub mod insights;
 pub mod install;
 pub mod live;
 pub mod live_codex;
