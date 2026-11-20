@@ -369,3 +369,29 @@ else
   echo "ℹ️  Skipping GitHub release — run \`gh auth login\` to enable."
   echo "    Manual: gh release create v$VERSION \"$DMG_PATH\" --repo $RELEASE_REPO --target $RELEASE_TARGET --title v$VERSION --notes-file \"$RELEASE_NOTES\" --draft"
 fi
+
+# ─── Homebrew tap ───────────────────────────────────────────────────────────
+# Point the cask at the DMG just uploaded. The tap is shared with the other
+# apps and lives in its own repository; this commits the bump there and does
+# not push it. Runs after the release, so a failure here is reported and never
+# undoes one.
+HOMEBREW_TAP_DIR="${HOMEBREW_TAP_DIR:-$(dirname "$PROJECT_DIR")/homebrew-tap}"
+CASK_PATH="$HOMEBREW_TAP_DIR/Casks/lunopeak.rb"
+if [ ! -f "$CASK_PATH" ]; then
+  echo "⚠️  No cask at $CASK_PATH — set HOMEBREW_TAP_DIR, then bump it by hand."
+else
+  DMG_SHA256=$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')
+  sed -i '' -E \
+    -e "s/^(  version )\"[^\"]*\"/\1\"$VERSION\"/" \
+    -e "s/^(  sha256 )\"[^\"]*\"/\1\"$DMG_SHA256\"/" \
+    "$CASK_PATH" || true
+  if grep -q "^  version \"$VERSION\"$" "$CASK_PATH" && grep -q "^  sha256 \"$DMG_SHA256\"$" "$CASK_PATH"; then
+    git -C "$HOMEBREW_TAP_DIR" commit -q -m "feat: update lunopeak to $VERSION" -- Casks/lunopeak.rb >/dev/null 2>&1 \
+      || echo "   cask already at $VERSION"
+    echo "🍺 Cask bumped to $VERSION in $HOMEBREW_TAP_DIR"
+    echo "   Push it — until that lands, brew installs the previous version."
+  else
+    echo "⚠️  Could not rewrite version/sha256 in $CASK_PATH — bump it by hand:"
+    echo "     version \"$VERSION\"   sha256 \"$DMG_SHA256\""
+  fi
+fi
