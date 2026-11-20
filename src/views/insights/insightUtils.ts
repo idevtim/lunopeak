@@ -3,8 +3,8 @@ import type { InsightAuthor, InsightBucketUnit, InsightPr, PrInsights, RepoInsig
 export const PERIODS = [
   { value: "1", label: "24 hours", noun: "24h" },
   { value: "7", label: "7 days", noun: "week" },
-  { value: "30", label: "30 days", noun: "30 days" },
-  { value: "90", label: "90 days", noun: "90 days" },
+  { value: "30", label: "30 days", noun: "30d" },
+  { value: "90", label: "90 days", noun: "90d" },
 ] as const;
 export type PeriodValue = (typeof PERIODS)[number]["value"];
 
@@ -140,3 +140,21 @@ export function prSeries(merged: InsightPr[], starts: number[]) {
 }
 
 export const nf = new Intl.NumberFormat();
+
+const compact1 = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+const compact0 = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 0 });
+
+/**
+ * Exact below 10,000, compact above ("12.4k", "646k", "1.2m") so tile
+ * numbers fit a narrow card. Pair with a `title` carrying `nf.format(n)`.
+ */
+export function big(n: number) {
+  const a = Math.abs(n);
+  if (a < 10_000) return nf.format(n);
+  return (a < 100_000 ? compact1 : compact0).format(n).toLowerCase();
+}
+
+/** "▲ 42% vs last 30d" — the short trend hint for a stat tile. */
+export function trendHint(pct: number, days: number) {
+  return `${pct >= 0 ? "▲" : "▼"} ${Math.abs(pct)}% vs last ${periodNoun(days)}`;
+}

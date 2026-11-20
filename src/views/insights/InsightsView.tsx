@@ -18,6 +18,7 @@ import {
   OTHER_COLOR,
   REPO_COLORS,
   allMerged,
+  big,
   bucketLabel,
   deltaPct,
   formatSpan,
@@ -25,11 +26,11 @@ import {
   mergeAuthors,
   nf,
   parsePeriod,
-  periodNoun,
   prSeries,
   rangeLabel,
   sumSeries,
   totals,
+  trendHint,
   type PeriodValue,
 } from "./insightUtils";
 import {
@@ -187,7 +188,6 @@ function AllRepos({
   const pending = prsLoading ? <ValueSkeleton /> : "—";
   const pendingHint = prsLoading ? <HintSkeleton /> : (note ?? undefined);
   const authors = mergeAuthors(data.repos);
-  const noun = periodNoun(data.days);
 
   return (
     <Page>
@@ -211,23 +211,26 @@ function AllRepos({
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <StatCard
           label="Commits"
-          value={nf.format(t.commits)}
-          hint={pct == null ? `${nf.format(t.allBranchCommits)} on all branches` : `${pct >= 0 ? "▲" : "▼"} ${Math.abs(pct)}% vs prior ${noun}`}
+          value={<span title={nf.format(t.commits)}>{big(t.commits)}</span>}
+          hint={pct == null ? `${big(t.allBranchCommits)} on all branches` : trendHint(pct, data.days)}
         />
-        <StatCard label="Pull requests merged" value={hasPrs ? nf.format(merged.length) : pending} hint={hasPrs ? `${nf.format(opened)} opened` : pendingHint} />
-        <StatCard label="Open pull requests" value={hasPrs ? nf.format(openNow) : pending} hint={hasPrs ? `across ${plural(prs!.repos.filter((r) => r.openNow > 0).length, "repo")}` : prsLoading ? <HintSkeleton /> : undefined} />
+        <StatCard label="PRs merged" value={hasPrs ? big(merged.length) : pending} hint={hasPrs ? `${nf.format(opened)} opened` : pendingHint} />
+        <StatCard label="Open PRs" value={hasPrs ? big(openNow) : pending} hint={hasPrs ? `across ${plural(prs!.repos.filter((r) => r.openNow > 0).length, "repo")}` : prsLoading ? <HintSkeleton /> : undefined} />
         <StatCard
           label="Lines changed"
           value={
-            <span>
-              <span className="text-teal-700 dark:text-teal-300">+{nf.format(t.additions)}</span>
+            <span
+              className="text-teal-700 dark:text-teal-300"
+              title={`+${nf.format(t.additions)} added, −${nf.format(t.deletions)} deleted, ${nf.format(t.filesChanged)} files`}
+            >
+              +{big(t.additions)}
             </span>
           }
-          hint={`−${nf.format(t.deletions)} · ${nf.format(t.filesChanged)} files`}
+          hint={`−${big(t.deletions)} · ${big(t.filesChanged)} files`}
         />
         <StatCard label="Active repos" value={`${active.length}`} hint={`of ${data.repos.length} tracked`} />
         <StatCard
-          label="Median time to merge"
+          label="Time to merge"
           value={hasPrs && mergeMedian != null ? formatSpan(mergeMedian) : pending}
           hint={hasPrs ? "opened → merged" : prsLoading ? <HintSkeleton /> : undefined}
         />

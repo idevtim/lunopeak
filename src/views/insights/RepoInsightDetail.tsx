@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { formatRelativeTime, formatUsd, plural } from "@/lib/format";
 import { openExternal } from "@/lib/utils";
 import type { PrInsights, RepoInsight, RepoInsights } from "@/types/api";
-import { allMerged, deltaPct, formatSpan, median, nf, periodNoun, prSeries, rangeLabel } from "./insightUtils";
+import { allMerged, big, deltaPct, formatSpan, median, nf, prSeries, rangeLabel, trendHint } from "./insightUtils";
 import { Skeleton } from "@/components/ui/Skeleton";
 import {
   ChartCard,
@@ -89,13 +89,13 @@ export function RepoInsightDetail({
       <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-3">
         <StatCard
           label="Commits"
-          value={nf.format(repo.commits)}
-          hint={pct == null ? `${nf.format(repo.allBranchCommits)} on all branches` : `${pct >= 0 ? "▲" : "▼"} ${Math.abs(pct)}% vs prior ${periodNoun(data.days)}`}
+          value={<span title={nf.format(repo.commits)}>{big(repo.commits)}</span>}
+          hint={pct == null ? `${big(repo.allBranchCommits)} on all branches` : trendHint(pct, data.days)}
         />
-        <StatCard label="Merged pull requests" value={hasPrs ? merged.length : pending} hint={hasPrs ? `${prRepo!.opened} opened` : prsLoading ? <HintSkeleton /> : undefined} />
-        <StatCard label="Open pull requests" value={hasPrs ? prRepo!.openNow : pending} />
-        <StatCard label="Median time to merge" value={hasPrs && mergeMedian != null ? formatSpan(mergeMedian) : pending} />
-        <StatCard label="Claude Code sessions" value={repo.sessions} hint={repo.sessions > 0 ? `${formatUsd(repo.agentCostUsd)} spent` : undefined} />
+        <StatCard label="PRs merged" value={hasPrs ? merged.length : pending} hint={hasPrs ? `${prRepo!.opened} opened` : prsLoading ? <HintSkeleton /> : undefined} />
+        <StatCard label="Open PRs" value={hasPrs ? prRepo!.openNow : pending} />
+        <StatCard label="Time to merge" value={hasPrs && mergeMedian != null ? formatSpan(mergeMedian) : pending} />
+        <StatCard label="Agent sessions" value={repo.sessions} hint={repo.sessions > 0 ? `${formatUsd(repo.agentCostUsd)} spent` : undefined} />
       </div>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
