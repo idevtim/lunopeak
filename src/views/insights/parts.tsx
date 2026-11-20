@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 import { GitMerge } from "lucide-react";
 import { BarChart } from "@/components/charts/BarChart";
 import { Card, CardHeader, Mono, Page, PageHeader } from "@/components/ui/Page";
@@ -213,12 +213,21 @@ export function PrListSkeleton({ title, rows = 5 }: { title: string; rows?: numb
   );
 }
 
+/**
+ * Insights is a wall of charts, so it uses more of a wide window than the
+ * standard 1100px page column — on a 16" MacBook that column left ~190px
+ * empty on each side.
+ */
+export function InsightsPage(props: ComponentProps<typeof Page>) {
+  return <Page {...props} className={cn("max-w-[1480px]", props.className)} />;
+}
+
 export function InsightsPageSkeleton() {
   return (
-    <Page>
+    <InsightsPage>
       <PageHeader title="Insights" lead="Reading git history across your repos…" />
       <InsightsSkeleton />
-    </Page>
+    </InsightsPage>
   );
 }
 

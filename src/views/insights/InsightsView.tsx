@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderGit2 } from "lucide-react";
 import { BarChart } from "@/components/charts/BarChart";
-import { Page, PageHeader, Card, CardHeader, Mono } from "@/components/ui/Page";
+import { PageHeader, Card, CardHeader, Mono } from "@/components/ui/Page";
 import { StatCard } from "@/components/ui/StatCard";
 import { EmptyState, ErrorState } from "@/components/ui/PageStates";
 import { useDelayedLoading } from "@/hooks/useDelayedLoading";
@@ -41,6 +41,7 @@ import {
   PrListSkeleton,
   ValueSkeleton,
   Committers,
+  InsightsPage,
   InsightsSkeleton,
   MergedPrList,
   PeriodBars,
@@ -85,7 +86,7 @@ export function InsightsView() {
 
   if (insights.isError) {
     return (
-      <Page>
+      <InsightsPage>
         <PageHeader title="Insights" actions={picker} />
         <ErrorState
           title="Couldn’t read your repos’ history"
@@ -93,15 +94,15 @@ export function InsightsView() {
           onRetry={() => void insights.refetch()}
           error={insights.error}
         />
-      </Page>
+      </InsightsPage>
     );
   }
   if (!insights.data) {
     return showSkeleton ? (
-      <Page>
+      <InsightsPage>
         <PageHeader title="Insights" lead="Reading git history across your repos…" actions={picker} />
         <InsightsSkeleton />
-      </Page>
+      </InsightsPage>
     ) : null;
   }
 
@@ -124,7 +125,7 @@ export function InsightsView() {
   }
   if (data.repos.length === 0) {
     return (
-      <Page>
+      <InsightsPage>
         <PageHeader title="Insights" />
         <EmptyState
           icon={FolderGit2}
@@ -132,7 +133,7 @@ export function InsightsView() {
           body="LunoPeak looks for git repos inside your project folders. Add the folder where you keep your code."
           primary={{ label: "Add project folder", onClick: () => navigateTo("settings", { tab: "agents" }) }}
         />
-      </Page>
+      </InsightsPage>
     );
   }
 
@@ -190,7 +191,7 @@ function AllRepos({
   const authors = mergeAuthors(data.repos);
 
   return (
-    <Page>
+    <InsightsPage>
       <PageHeader
         title="Insights"
         lead={
@@ -405,7 +406,7 @@ function AllRepos({
           </div>
         </Card>
       )}
-    </Page>
+    </InsightsPage>
   );
 }
 
