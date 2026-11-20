@@ -34,7 +34,11 @@ import {
 } from "./insightUtils";
 import {
   ChartCard,
+  ChartCardSkeleton,
   CodeFrequency,
+  HintSkeleton,
+  PrListSkeleton,
+  ValueSkeleton,
   Committers,
   InsightsSkeleton,
   MergedPrList,
@@ -179,7 +183,9 @@ function AllRepos({
   const { blocking: note, partial } = githubNote(prs, prsError);
   const hasPrs = !!prs && !note;
   const pct = deltaPct(t.commits, t.prevCommits);
-  const pending = prsLoading ? "…" : "—";
+  // Waiting on GitHub: shimmer in place of the number; after that, a dash.
+  const pending = prsLoading ? <ValueSkeleton /> : "—";
+  const pendingHint = prsLoading ? <HintSkeleton /> : (note ?? undefined);
   const authors = mergeAuthors(data.repos);
   const noun = periodNoun(data.days);
 
@@ -208,8 +214,8 @@ function AllRepos({
           value={nf.format(t.commits)}
           hint={pct == null ? `${nf.format(t.allBranchCommits)} on all branches` : `${pct >= 0 ? "▲" : "▼"} ${Math.abs(pct)}% vs prior ${noun}`}
         />
-        <StatCard label="Pull requests merged" value={hasPrs ? nf.format(merged.length) : pending} hint={hasPrs ? `${nf.format(opened)} opened` : note ?? "Asking GitHub…"} />
-        <StatCard label="Open pull requests" value={hasPrs ? nf.format(openNow) : pending} hint={hasPrs ? `across ${plural(prs!.repos.filter((r) => r.openNow > 0).length, "repo")}` : undefined} />
+        <StatCard label="Pull requests merged" value={hasPrs ? nf.format(merged.length) : pending} hint={hasPrs ? `${nf.format(opened)} opened` : pendingHint} />
+        <StatCard label="Open pull requests" value={hasPrs ? nf.format(openNow) : pending} hint={hasPrs ? `across ${plural(prs!.repos.filter((r) => r.openNow > 0).length, "repo")}` : prsLoading ? <HintSkeleton /> : undefined} />
         <StatCard
           label="Lines changed"
           value={
@@ -223,7 +229,7 @@ function AllRepos({
         <StatCard
           label="Median time to merge"
           value={hasPrs && mergeMedian != null ? formatSpan(mergeMedian) : pending}
-          hint={hasPrs ? "opened → merged" : undefined}
+          hint={hasPrs ? "opened → merged" : prsLoading ? <HintSkeleton /> : undefined}
         />
       </div>
 
@@ -316,10 +322,13 @@ function AllRepos({
             />
           </ChartCard>
         </div>
+      ) : prsLoading ? (
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <ChartCardSkeleton title="Pull request throughput" />
+          <ChartCardSkeleton title="Median time to merge" />
+        </div>
       ) : (
-        <Card className="px-[18px] py-3.5 text-[13px] text-zinc-600 dark:text-zinc-400">
-          {prsLoading ? "Asking GitHub for pull request stats…" : note}
-        </Card>
+        <Card className="px-[18px] py-3.5 text-[13px] text-zinc-600 dark:text-zinc-400">{note}</Card>
       )}
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
@@ -360,11 +369,16 @@ function AllRepos({
         </ChartCard>
       </div>
 
-      {hasPrs && merged.length > 0 && (
-        <Card>
-          <CardHeader title={`${plural(merged.length, "pull request")} merged across ${plural(prRepos, "repo")}`} />
-          <MergedPrList prs={merged} showRepo />
-        </Card>
+      {prsLoading ? (
+        <PrListSkeleton title="Merged pull requests" />
+      ) : (
+        hasPrs &&
+        merged.length > 0 && (
+          <Card>
+            <CardHeader title={`${plural(merged.length, "pull request")} merged across ${plural(prRepos, "repo")}`} />
+            <MergedPrList prs={merged} showRepo />
+          </Card>
+        )
       )}
 
       {quiet.length > 0 && (

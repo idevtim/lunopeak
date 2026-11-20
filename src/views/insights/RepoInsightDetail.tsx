@@ -7,7 +7,19 @@ import { formatRelativeTime, formatUsd, plural } from "@/lib/format";
 import { openExternal } from "@/lib/utils";
 import type { PrInsights, RepoInsight, RepoInsights } from "@/types/api";
 import { allMerged, deltaPct, formatSpan, median, nf, periodNoun, prSeries, rangeLabel } from "./insightUtils";
-import { ChartCard, CodeFrequency, Committers, MergedPrList, PeriodBars, githubNote } from "./parts";
+import { Skeleton } from "@/components/ui/Skeleton";
+import {
+  ChartCard,
+  ChartCardSkeleton,
+  CodeFrequency,
+  Committers,
+  HintSkeleton,
+  MergedPrList,
+  PeriodBars,
+  PrListSkeleton,
+  ValueSkeleton,
+  githubNote,
+} from "./parts";
 
 /** One repo's Pulse: GitHub's per-repo page, plus local agent activity. */
 export function RepoInsightDetail({
@@ -36,7 +48,7 @@ export function RepoInsightDetail({
   const hasPrs = !!prRepo && !prRepo.error;
   const pct = deltaPct(repo.commits, repo.prevCommits);
   const branch = repo.refs[repo.refs.length - 1] ?? "HEAD";
-  const pending = prsLoading ? "…" : "—";
+  const pending = prsLoading ? <ValueSkeleton /> : "—";
   const fetchedLongAgo = repo.lastFetchMs != null && data.untilMs - repo.lastFetchMs > 24 * 3_600_000;
 
   return (
@@ -80,7 +92,7 @@ export function RepoInsightDetail({
           value={nf.format(repo.commits)}
           hint={pct == null ? `${nf.format(repo.allBranchCommits)} on all branches` : `${pct >= 0 ? "▲" : "▼"} ${Math.abs(pct)}% vs prior ${periodNoun(data.days)}`}
         />
-        <StatCard label="Merged pull requests" value={hasPrs ? merged.length : pending} hint={hasPrs ? `${prRepo!.opened} opened` : undefined} />
+        <StatCard label="Merged pull requests" value={hasPrs ? merged.length : pending} hint={hasPrs ? `${prRepo!.opened} opened` : prsLoading ? <HintSkeleton /> : undefined} />
         <StatCard label="Open pull requests" value={hasPrs ? prRepo!.openNow : pending} />
         <StatCard label="Median time to merge" value={hasPrs && mergeMedian != null ? formatSpan(mergeMedian) : pending} />
         <StatCard label="Claude Code sessions" value={repo.sessions} hint={repo.sessions > 0 ? `${formatUsd(repo.agentCostUsd)} spent` : undefined} />
@@ -117,7 +129,11 @@ export function RepoInsightDetail({
               At least <b>{repo.agentCommits}</b> commits name an agent in a Co-authored-by trailer.
             </p>
           )}
-          {!hasPrs && note && <p className="m-0 text-[13px]">{prsLoading ? "Asking GitHub for pull request stats…" : note}</p>}
+          {prsLoading ? (
+            <Skeleton className="h-3.5 w-4/5" />
+          ) : (
+            !hasPrs && note && <p className="m-0 text-[13px]">{note}</p>
+          )}
         </Card>
         <ChartCard title="Top committers" meta={plural(repo.authors.length, "author")}>
           <Committers authors={repo.authors} />
@@ -132,6 +148,8 @@ export function RepoInsightDetail({
           <ChartCard title="Pull requests merged" meta={`${merged.length} merged · ${prRepo!.opened} opened`}>
             <PeriodBars data={data} values={series.count} barClassName="bg-violet-400" tooltip={(v, l) => `${l}: ${plural(v, "PR")} merged`} />
           </ChartCard>
+        ) : prsLoading ? (
+          <ChartCardSkeleton title="Pull requests merged" />
         ) : (
           <ChartCard title="Code frequency">
             <CodeFrequency data={data} additions={repo.additionsByBucket} deletions={repo.deletionsByBucket} />
@@ -149,6 +167,8 @@ export function RepoInsightDetail({
               <p className="m-0 px-[18px] pb-4 text-[13px] text-zinc-500 dark:text-zinc-400">None this period.</p>
             )}
           </Card>
+        ) : prsLoading ? (
+          <PrListSkeleton title="Merged pull requests" />
         ) : (
           <div />
         )}
@@ -178,7 +198,7 @@ export function RepoInsightDetail({
         </ChartCard>
       </div>
 
-      {hasPrs && (
+      {(hasPrs || prsLoading) && (
         <ChartCard
           title="Code frequency"
           meta={

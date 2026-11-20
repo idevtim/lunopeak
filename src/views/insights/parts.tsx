@@ -167,6 +167,46 @@ export function githubNote(prs: PrInsights | undefined, error: unknown): { block
   };
 }
 
+/** Stat-card value and hint placeholders while GitHub answers. */
+export function ValueSkeleton() {
+  return <Skeleton className="my-1 h-7 w-16" />;
+}
+export function HintSkeleton() {
+  return <Skeleton className="h-3 w-24" />;
+}
+
+/** A chart card with its real title, bars blocked out until the data lands. */
+export function ChartCardSkeleton({ title }: { title: string }) {
+  return (
+    <ChartCard title={title} meta={<Skeleton className="h-3 w-24" />}>
+      <Skeleton className="h-[120px] w-full" />
+      <div className="mt-2 flex gap-2">
+        {Array.from({ length: 7 }, (_, i) => (
+          <Skeleton key={i} className="h-2.5 flex-1" />
+        ))}
+      </div>
+    </ChartCard>
+  );
+}
+
+/** Merged-PR list rows blocked out: icon, title line, detail line. */
+export function PrListSkeleton({ title, rows = 5 }: { title: string; rows?: number }) {
+  return (
+    <Card className="min-w-0">
+      <CardHeader title={title} meta={<Skeleton className="h-3 w-20" />} />
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="flex items-start gap-3 border-t border-black/[0.05] px-[18px] py-3 dark:border-white/[0.06]">
+          <Skeleton className="mt-0.5 size-[15px] shrink-0 rounded-full" />
+          <div className="flex flex-1 flex-col gap-1.5">
+            <Skeleton className="h-3 w-3/5" />
+            <Skeleton className="h-2.5 w-2/5" />
+          </div>
+        </div>
+      ))}
+    </Card>
+  );
+}
+
 export function InsightsPageSkeleton() {
   return (
     <Page>
