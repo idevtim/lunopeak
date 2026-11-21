@@ -50,7 +50,7 @@ npm run dist:nix   # deb, rpm, AppImage                  (scripts/dist-linux.sh)
 
 `dist:nix` dispatches on the host: it runs `build-linux.sh` natively on Linux, and `docker-build-linux.sh` — the same script inside an amd64 Ubuntu container — on macOS. Pass `-- --build-only` to produce bundles without tagging or uploading. `build:mac` / `build:win` / `build:linux` remain as aliases.
 
-For signed, auto-updating release builds (CI workflow, signing keys, GitHub secrets, `latest.json` shape, in-app prompt behavior), see [`RELEASE.md`](../RELEASE.md). Per-version notes go in `release-notes/`.
+For signed, auto-updating release builds (CI workflow, signing keys, GitHub secrets, `latest.json` shape, in-app prompt behavior), see [`RELEASE.md`](RELEASE.md). Per-version notes go in `release-notes/`.
 
 ## Project layout
 

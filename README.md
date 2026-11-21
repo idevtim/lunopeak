@@ -119,7 +119,7 @@ npm run tauri:dev     # full app; the first Rust compile takes a few minutes
 | `cd src-tauri && cargo test` | Rust tests |
 | `npm run tauri:build` | Unsigned platform bundles in `src-tauri/target/release/bundle/` |
 
-Signed, notarized, auto-updating releases use the maintainer's certificates and keys; [`RELEASE.md`](RELEASE.md) documents that pipeline if you want to run your own.
+Signed, notarized, auto-updating releases use the maintainer's certificates and keys; [`docs/RELEASE.md`](docs/RELEASE.md) documents that pipeline if you want to run your own.
 
 **Stack:** Tauri 2 (Rust) · React 19 · TypeScript · Vite · Tailwind CSS 4 · TanStack Query · Zustand · Recharts.
 
