@@ -14,6 +14,7 @@
 import type {
   ActiveProcess,
   InsightPr,
+  PrSession,
   PrInsights,
   RepoInsight,
   RepoInsights,
@@ -1812,13 +1813,33 @@ export function prInsights(days: number): PrInsights {
       const mergedAtMs = Math.round(starts[0] + (end - starts[0]) * noise(ri * 31 + i));
       const openFor = (0.2 + 6 * noise(i + ri * 13) ** 2) * 3_600_000;
       const n = 400 + ri * 100 + i;
+      const title = INSIGHT_PR_TITLES[(i + ri) % INSIGHT_PR_TITLES.length];
+      const createdAtMs = Math.round(mergedAtMs - openFor);
+      // Most PRs took one or two agent sessions; a few needed several tries.
+      const tries = i % 9 === 0 ? 0 : 1 + Math.floor(4 * noise(i * 7 + ri) ** 2);
+      const agentSessions: PrSession[] = Array.from({ length: tries }, (_, t) => {
+        const startTs = Math.round(createdAtMs - (tries - t) * 2.5 * 3_600_000 * noise(i + t * 5 + 1));
+        const costUsd = Math.round((0.4 + 6 * noise(i * 3 + t + ri) ** 2) * 100) / 100;
+        return {
+          id: `demo-pr-${n}-${t}`,
+          startTs,
+          endTs: startTs + Math.round((10 + 50 * noise(i + t)) * 60_000),
+          costUsd,
+          sessionCostUsd: t === 0 && tries > 2 ? Math.round(costUsd * 140) / 100 : costUsd,
+          firstPrompt: t === 0 ? title : ["That broke the tests, try another approach", "Still failing on CI — take a look", "Let's start over with a smaller change"][(t - 1) % 3],
+          model: "claude-opus-5-5",
+        };
+      });
       return {
         number: n,
-        title: INSIGHT_PR_TITLES[(i + ri) % INSIGHT_PR_TITLES.length],
+        title,
         url: `https://github.com/luno-labs/${r.name}/pull/${n}`,
         author: i % 9 === 0 ? "riley" : "timothy",
-        createdAtMs: Math.round(mergedAtMs - openFor),
+        createdAtMs,
         mergedAtMs,
+        headRef: `fix/${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 28).replace(/-$/, "")}`,
+        agentCostUsd: Math.round(agentSessions.reduce((a, x) => a + x.costUsd, 0) * 100) / 100,
+        agentSessions,
       };
     }).sort((a, b) => b.mergedAtMs - a.mergedAtMs);
     return {
@@ -1828,6 +1849,7 @@ export function prInsights(days: number): PrInsights {
       merged,
       opened: count + (ri === 0 ? 2 : 0),
       openNow: [3, 2, 1, 0][ri],
+      defaultBranch: "main",
       error: null,
     };
   });

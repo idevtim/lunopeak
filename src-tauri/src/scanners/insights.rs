@@ -6,8 +6,8 @@
 //! numbers come from `gh` in a separate pass because it's slow and online.
 
 use crate::models::{
-    HotFile, InsightAuthor, InsightPr, PrInsights, PullRequestList, RepoInsight, RepoInsights,
-    RepoPrInsight, Session,
+    HotFile, InsightAuthor, InsightPr, PrInsights, PrSession, PullRequestList, RepoInsight,
+    RepoInsights, RepoPrInsight, Session,
 };
 use crate::process_ext::NoWindow;
 use crate::scanners::github;
@@ -422,6 +422,8 @@ struct RawInsightPr {
     author: Option<RawLogin>,
     created_at: Option<String>,
     merged_at: Option<String>,
+    #[serde(default)]
+    head_ref_name: String,
 }
 
 fn gh_prs_since(slug: &str, since: DateTime<Local>) -> Result<Vec<RawInsightPr>, String> {
@@ -441,7 +443,7 @@ fn gh_prs_since(slug: &str, since: DateTime<Local>) -> Result<Vec<RawInsightPr>,
             "--search",
             &format!("updated:>={date}"),
             "--json",
-            "number,title,url,author,createdAt,mergedAt",
+            "number,title,url,author,createdAt,mergedAt,headRefName",
             "--limit",
             "1000",
         ])
@@ -475,6 +477,10 @@ pub fn collect_prs(repos: &[(String, String)], days: u32, open: &PullRequestList
         .into_par_iter()
         .map(|(name, path, slug)| {
             let open_now = open.prs.iter().filter(|p| p.repo_path == path).count() as u32;
+            let default_branch = default_refs(Path::new(&path))
+                .last()
+                .filter(|r| r.as_str() != "HEAD")
+                .map(|r| r.strip_prefix("origin/").unwrap_or(r).to_string());
             let mut ins = RepoPrInsight {
                 name,
                 path,
@@ -482,6 +488,7 @@ pub fn collect_prs(repos: &[(String, String)], days: u32, open: &PullRequestList
                 merged: Vec::new(),
                 opened: 0,
                 open_now,
+                default_branch,
                 error: None,
             };
             match gh_prs_since(&slug, period.since) {
@@ -504,6 +511,9 @@ pub fn collect_prs(repos: &[(String, String)], days: u32, open: &PullRequestList
                             author: pr.author.and_then(|a| a.login).unwrap_or_default(),
                             created_at_ms: created,
                             merged_at_ms: merged,
+                            head_ref: pr.head_ref_name,
+                            agent_cost_usd: 0.0,
+                            agent_sessions: Vec::new(),
                         });
                     }
                     ins.merged.sort_by_key(|p| std::cmp::Reverse(p.merged_at_ms));
@@ -515,6 +525,71 @@ pub fn collect_prs(repos: &[(String, String)], days: u32, open: &PullRequestList
         .collect();
     out.sort_by(|a, b| b.merged.len().cmp(&a.merged.len()).then(a.name.cmp(&b.name)));
     PrInsights { status, github_repo_count, repos: out }
+}
+
+// ── What each PR cost ─────────────────────────────────────────────────
+
+/// How far before a PR opened its branch's sessions still count. Retries
+/// usually start days before the PR, but a branch name reused months later
+/// ("fix-tests") shouldn't inherit the old spend.
+const PR_LOOKBACK_MS: i64 = 14 * 24 * 3600 * 1000;
+
+/// Fill each merged PR's agent cost from Claude sessions on its head branch:
+/// same repo, started before the merge and no earlier than the previous
+/// merge of the same branch name (or `PR_LOOKBACK_MS` before it opened).
+/// Only the spend on that branch counts, so a session that also did other
+/// work is split. Runs on every request over the cached `gh` data, so
+/// sessions that finish after the PR list was fetched still show up.
+pub fn attach_pr_costs(prs: &mut PrInsights, sessions: &[Session]) {
+    let repo_paths: Vec<String> = prs.repos.iter().map(|r| r.path.clone()).collect();
+    for repo in &mut prs.repos {
+        // Longest matching repo wins, so a nested repo keeps its own sessions.
+        let mine: Vec<&Session> = sessions
+            .iter()
+            .filter(|s| !s.cost_by_branch.is_empty())
+            .filter(|s| {
+                let Some(project) = s.project_path.as_deref() else { return false };
+                in_repo(project, &repo.path)
+                    && !repo_paths
+                        .iter()
+                        .any(|p| p.len() > repo.path.len() && in_repo(project, p))
+            })
+            .collect();
+        let mut order: Vec<usize> = (0..repo.merged.len()).collect();
+        order.sort_by_key(|&i| repo.merged[i].merged_at_ms);
+        let mut last_merge: HashMap<String, i64> = HashMap::new();
+        for i in order {
+            let pr = &mut repo.merged[i];
+            pr.agent_cost_usd = 0.0;
+            pr.agent_sessions.clear();
+            if pr.head_ref.is_empty() || repo.default_branch.as_deref() == Some(pr.head_ref.as_str()) {
+                continue;
+            }
+            let after = last_merge
+                .get(&pr.head_ref)
+                .copied()
+                .unwrap_or(i64::MIN)
+                .max(pr.created_at_ms - PR_LOOKBACK_MS);
+            for s in &mine {
+                if s.start_ts <= after || s.start_ts > pr.merged_at_ms {
+                    continue;
+                }
+                let Some(&cost) = s.cost_by_branch.get(&pr.head_ref) else { continue };
+                pr.agent_cost_usd += cost;
+                pr.agent_sessions.push(PrSession {
+                    id: s.id.clone(),
+                    start_ts: s.start_ts,
+                    end_ts: s.end_ts,
+                    cost_usd: cost,
+                    session_cost_usd: s.cost_usd,
+                    first_prompt: s.first_prompt.clone(),
+                    model: s.model.clone(),
+                });
+            }
+            pr.agent_sessions.sort_by_key(|s| s.start_ts);
+            last_merge.insert(pr.head_ref.clone(), pr.merged_at_ms);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -590,6 +665,85 @@ mod tests {
         assert!(in_repo("/a/repo", "/a/repo"));
         assert!(in_repo("/a/repo/sub", "/a/repo"));
         assert!(!in_repo("/a/repo2", "/a/repo"));
+    }
+
+    fn session(id: &str, project: &str, start_ts: i64, branches: &[(&str, f64)]) -> Session {
+        Session {
+            id: id.into(),
+            project_path: Some(project.into()),
+            project_name: None,
+            branch: None,
+            model: None,
+            start_ts,
+            end_ts: start_ts + 1,
+            message_count: 0,
+            first_prompt: None,
+            usage: Default::default(),
+            cost_usd: branches.iter().map(|b| b.1).sum(),
+            cost_by_day: Default::default(),
+            subagent_count: 0,
+            subagent_cost_usd: 0.0,
+            cost_by_branch: branches.iter().map(|(b, c)| (b.to_string(), *c)).collect(),
+            tool_uses: Default::default(),
+            tool_errors: 0,
+            tool_errors_by_name: Default::default(),
+            tool_sequences: Default::default(),
+            files_edited: Default::default(),
+            bash_commands: Default::default(),
+        }
+    }
+
+    fn pr(number: u32, head: &str, created: i64, merged: i64) -> InsightPr {
+        InsightPr {
+            number,
+            title: String::new(),
+            url: String::new(),
+            author: String::new(),
+            created_at_ms: created,
+            merged_at_ms: merged,
+            head_ref: head.into(),
+            agent_cost_usd: 0.0,
+            agent_sessions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn pr_costs_sum_retries_on_the_head_branch() {
+        const DAY: i64 = 86_400_000;
+        let t0 = 100 * DAY;
+        let mut prs = PrInsights {
+            status: crate::models::GithubStatus { installed: true, authenticated: true, user: None, message: None },
+            github_repo_count: 1,
+            repos: vec![RepoPrInsight {
+                name: "r".into(),
+                path: "/r".into(),
+                slug: "o/r".into(),
+                // Same branch name merged twice: the second PR must not
+                // inherit the first one's sessions.
+                merged: vec![pr(2, "fix", t0 + 5 * DAY, t0 + 6 * DAY), pr(1, "fix", t0, t0 + DAY), pr(3, "main", t0, t0 + DAY)],
+                opened: 3,
+                open_now: 0,
+                default_branch: Some("main".into()),
+                error: None,
+            }],
+        };
+        let sessions = vec![
+            session("a", "/r", t0 - DAY, &[("fix", 2.0)]),             // first attempt
+            session("b", "/r/sub", t0 + DAY / 2, &[("fix", 3.0), ("main", 9.0)]), // retry, split
+            session("c", "/r", t0 + 4 * DAY, &[("fix", 5.0)]),         // second PR
+            session("d", "/r", t0 + 7 * DAY, &[("fix", 7.0)]),         // after merge
+            session("e", "/other", t0, &[("fix", 11.0)]),              // other repo
+            session("f", "/r", t0 - 30 * DAY, &[("fix", 13.0)]),       // too old
+        ];
+        attach_pr_costs(&mut prs, &sessions);
+        let m = &prs.repos[0].merged;
+        let ids = |p: &InsightPr| p.agent_sessions.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&m[1]), ["a", "b"]);
+        assert_eq!(m[1].agent_cost_usd, 5.0);
+        assert_eq!(m[1].agent_sessions[1].session_cost_usd, 12.0);
+        assert_eq!(ids(&m[0]), ["c"]);
+        assert_eq!(m[0].agent_cost_usd, 5.0);
+        assert!(m[2].agent_sessions.is_empty(), "default branch PRs get no cost");
     }
 
     /// `LUNOPEAK_INSIGHTS_REPO=/path cargo test insights_live -- --ignored --nocapture`

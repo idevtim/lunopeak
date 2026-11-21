@@ -228,6 +228,8 @@ export interface Session {
   /** Subagent transcripts (`<id>/subagents/agent-*.jsonl`) rolled into this session. */
   subagentCount: number;
   subagentCostUsd: number;
+  /** Cost per git branch, from each turn's `gitBranch` (subagents included). */
+  costByBranch?: Record<string, number>;
   /** file_path → number of Edit/Write/NotebookEdit invocations. May be empty. */
   filesEdited?: Record<string, number>;
 }
@@ -1102,6 +1104,8 @@ export interface RepoPrInsight {
   merged: InsightPr[];
   opened: number;
   openNow: number;
+  /** PRs from this branch get no agent cost. */
+  defaultBranch: string | null;
   error: string | null;
 }
 
@@ -1112,4 +1116,22 @@ export interface InsightPr {
   author: string;
   createdAtMs: number;
   mergedAtMs: number;
+  /** Branch the PR merged from. */
+  headRef: string;
+  /** Claude Code spend on `headRef` before the merge, every attempt included. */
+  agentCostUsd: number;
+  agentSessions: PrSession[];
+}
+
+/** A Claude Code session that worked on a PR's branch. */
+export interface PrSession {
+  id: string;
+  startTs: number;
+  endTs: number;
+  /** Spend on the PR's branch only. */
+  costUsd: number;
+  /** The whole session's spend, other branches included. */
+  sessionCostUsd: number;
+  firstPrompt: string | null;
+  model: string | null;
 }

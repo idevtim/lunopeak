@@ -1,15 +1,16 @@
 import { useState, type ReactNode } from "react";
-import { GitMerge } from "lucide-react";
+import { ChevronDown, GitMerge } from "lucide-react";
 import { BarChart } from "@/components/charts/BarChart";
 import { Card, CardHeader, Mono, Page, PageHeader } from "@/components/ui/Page";
 import { Segmented } from "@/components/ui/Segmented";
 import { StatCardSkeleton } from "@/components/ui/StatCard";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Button } from "@/components/ui/Button";
-import { formatRelativeTime } from "@/lib/format";
+import { formatRelativeTime, formatUsd, plural } from "@/lib/format";
+import { useHashRoute } from "@/hooks/useHashRoute";
 import { cn, openExternal } from "@/lib/utils";
 import type { InsightAuthor, PrInsights, RepoInsights } from "@/types/api";
-import { PERIODS, bucketLabel, formatSpan, nf, type MergedPr, type PeriodValue } from "./insightUtils";
+import { PERIODS, bucketLabel, formatSpan, median, nf, type MergedPr, type PeriodValue } from "./insightUtils";
 
 export function PeriodPicker({ value, onChange }: { value: PeriodValue; onChange: (v: PeriodValue) => void }) {
   return (
@@ -120,28 +121,84 @@ export function Committers({ authors, detail }: { authors: (InsightAuthor & { re
   );
 }
 
+type PrSort = "newest" | "cost";
+
+/**
+ * Merged PRs in a card, each with what Claude Code spent on its branch
+ * (every attempt, retries included). Expanding the cost lists the sessions,
+ * each linking to its replay.
+ */
+export function MergedPrCard({ title, prs, showRepo }: { title: ReactNode; prs: MergedPr[]; showRepo?: boolean }) {
+  const [sort, setSort] = useState<PrSort>("newest");
+  const costed = prs.filter((p) => p.agentCostUsd > 0);
+  const spent = costed.reduce((a, p) => a + p.agentCostUsd, 0);
+  const mid = median(costed.map((p) => p.agentCostUsd));
+  const sorted = sort === "cost" ? [...prs].sort((a, b) => b.agentCostUsd - a.agentCostUsd || b.mergedAtMs - a.mergedAtMs) : prs;
+  return (
+    <Card className="min-w-0">
+      <CardHeader
+        title={title}
+        meta={
+          costed.length > 0 && (
+            <span title={`Claude Code spend on the branches of ${plural(costed.length, "pull request")}`}>
+              {formatUsd(spent)} agent spend · {formatUsd(mid ?? 0)} median per PR
+            </span>
+          )
+        }
+        action={
+          costed.length > 0 && (
+            <Segmented
+              ariaLabel="Sort pull requests"
+              value={sort}
+              onChange={setSort}
+              options={[
+                { value: "newest", label: "Newest" },
+                { value: "cost", label: "Cost" },
+              ]}
+            />
+          )
+        }
+      />
+      {prs.length > 0 ? (
+        <MergedPrList key={sort} prs={sorted} showRepo={showRepo} />
+      ) : (
+        <p className="m-0 px-[18px] pb-4 text-[13px] text-zinc-500 dark:text-zinc-400">None this period.</p>
+      )}
+    </Card>
+  );
+}
+
 export function MergedPrList({ prs, showRepo, initial = 8 }: { prs: MergedPr[]; showRepo?: boolean; initial?: number }) {
   const [all, setAll] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
   const shown = all ? prs : prs.slice(0, initial);
   return (
     <div className="flex flex-col">
-      {shown.map((p) => (
-        <button
-          key={`${p.repoPath}#${p.number}`}
-          type="button"
-          onClick={() => openExternal(p.url)}
-          className="flex items-start gap-3 border-t border-black/[0.05] px-[18px] py-2.5 text-left transition-colors hover:bg-black/[0.025] dark:border-white/[0.06] dark:hover:bg-white/[0.03]"
-        >
-          <GitMerge size={15} className="mt-0.5 shrink-0 text-violet-500 dark:text-violet-400" aria-hidden />
-          <span className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-[13px] font-medium text-zinc-900 dark:text-zinc-100">{p.title}</span>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">
-              {showRepo && <span className="font-medium text-zinc-700 dark:text-zinc-300">{p.repoName} </span>}#{p.number} by {p.author || "unknown"} · merged{" "}
-              {formatRelativeTime(p.mergedAtMs)}, open {formatSpan(p.mergedAtMs - p.createdAtMs)}
-            </span>
-          </span>
-        </button>
-      ))}
+      {shown.map((p) => {
+        const key = `${p.repoPath}#${p.number}`;
+        return (
+          <div key={key} className="border-t border-black/[0.05] dark:border-white/[0.06]">
+            <div className="flex items-start">
+              <button
+                type="button"
+                onClick={() => openExternal(p.url)}
+                className="flex min-w-0 flex-1 items-start gap-3 py-2.5 pl-[18px] pr-3 text-left transition-colors hover:bg-black/[0.025] dark:hover:bg-white/[0.03]"
+              >
+                <GitMerge size={15} className="mt-0.5 shrink-0 text-violet-500 dark:text-violet-400" aria-hidden />
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="text-[13px] font-medium text-zinc-900 dark:text-zinc-100">{p.title}</span>
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {showRepo && <span className="font-medium text-zinc-700 dark:text-zinc-300">{p.repoName} </span>}#{p.number} by {p.author || "unknown"} · merged{" "}
+                    {formatRelativeTime(p.mergedAtMs)}, open {formatSpan(p.mergedAtMs - p.createdAtMs)}
+                  </span>
+                </span>
+              </button>
+              <PrCost pr={p} expanded={open === key} onToggle={() => setOpen(open === key ? null : key)} />
+            </div>
+            {open === key && <PrSessions pr={p} />}
+          </div>
+        );
+      })}
       {prs.length > initial && (
         <div className="border-t border-black/[0.05] px-[18px] py-2.5 dark:border-white/[0.06]">
           <Button variant="ghost" onClick={() => setAll((v) => !v)}>
@@ -149,6 +206,70 @@ export function MergedPrList({ prs, showRepo, initial = 8 }: { prs: MergedPr[]; 
           </Button>
         </div>
       )}
+    </div>
+  );
+}
+
+function PrCost({ pr, expanded, onToggle }: { pr: MergedPr; expanded: boolean; onToggle: () => void }) {
+  const n = pr.agentSessions.length;
+  if (n === 0) {
+    return (
+      <span className="shrink-0 py-2.5 pr-[18px] text-right text-xs text-zinc-400 dark:text-zinc-500" title="No Claude Code sessions on this branch">
+        —
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      title={`Claude Code spend on ${pr.headRef}`}
+      className="flex shrink-0 items-start gap-1.5 self-stretch py-2.5 pl-3 pr-[18px] text-right transition-colors hover:bg-black/[0.025] dark:hover:bg-white/[0.03]"
+    >
+      <span className="flex flex-col items-end gap-0.5">
+        <Mono className="text-[13px] font-medium text-zinc-900 dark:text-zinc-100">{formatUsd(pr.agentCostUsd)}</Mono>
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">{plural(n, "session")}</span>
+      </span>
+      <ChevronDown size={14} aria-hidden className={cn("mt-0.5 text-zinc-400 transition-transform", expanded && "rotate-180")} />
+    </button>
+  );
+}
+
+const timeFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+/** The sessions behind a PR's cost, oldest first, each opening its replay. */
+function PrSessions({ pr }: { pr: MergedPr }) {
+  const { navigateTo } = useHashRoute();
+  return (
+    <div className="px-[18px] pb-3 pl-[46px]">
+      <p className="m-0 mb-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+        Claude Code sessions on <Mono>{pr.headRef}</Mono> before it merged
+      </p>
+      <ol className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-black/[0.06] p-0 dark:border-white/[0.08]">
+        {pr.agentSessions.map((s, i) => {
+          const shared = s.sessionCostUsd - s.costUsd > 0.005;
+          return (
+            <li key={s.id} className={cn(i > 0 && "border-t border-black/[0.05] dark:border-white/[0.06]")}>
+              <button
+                type="button"
+                onClick={() => navigateTo("session-replay", { id: s.id })}
+                className="flex w-full items-baseline gap-3 px-3 py-2 text-left transition-colors hover:bg-black/[0.025] dark:hover:bg-white/[0.03]"
+              >
+                <span className="w-5 shrink-0 text-xs text-zinc-400 dark:text-zinc-500">{i + 1}</span>
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="truncate text-[13px] text-zinc-800 dark:text-zinc-200">{s.firstPrompt || "Untitled session"}</span>
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {timeFmt.format(s.startTs)} · {formatSpan(Math.max(0, s.endTs - s.startTs))}
+                    {shared && ` · ${formatUsd(s.sessionCostUsd)} session, part on other branches`}
+                  </span>
+                </span>
+                <Mono className="shrink-0 text-[13px] text-zinc-800 dark:text-zinc-200">{formatUsd(s.costUsd)}</Mono>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
     </div>
   );
 }

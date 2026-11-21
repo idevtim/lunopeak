@@ -42,7 +42,7 @@ import {
   ValueSkeleton,
   Committers,
   InsightsSkeleton,
-  MergedPrList,
+  MergedPrCard,
   PeriodBars,
   PeriodPicker,
   githubNote,
@@ -378,10 +378,7 @@ function AllRepos({
       ) : (
         hasPrs &&
         merged.length > 0 && (
-          <Card>
-            <CardHeader title={`${plural(merged.length, "pull request")} merged across ${plural(prRepos, "repo")}`} />
-            <MergedPrList prs={merged} showRepo />
-          </Card>
+          <MergedPrCard title={`${plural(merged.length, "pull request")} merged across ${plural(prRepos, "repo")}`} prs={merged} showRepo />
         )
       )}
 

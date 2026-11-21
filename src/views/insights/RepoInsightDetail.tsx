@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { ChevronLeft } from "lucide-react";
-import { Page, PageHeader, Card, CardHeader, Mono } from "@/components/ui/Page";
+import { Page, PageHeader, Card, Mono } from "@/components/ui/Page";
 import { StatCard } from "@/components/ui/StatCard";
 import { Button } from "@/components/ui/Button";
 import { formatRelativeTime, formatUsd, plural } from "@/lib/format";
@@ -14,7 +14,7 @@ import {
   CodeFrequency,
   Committers,
   HintSkeleton,
-  MergedPrList,
+  MergedPrCard,
   PeriodBars,
   PrListSkeleton,
   ValueSkeleton,
@@ -159,14 +159,7 @@ export function RepoInsightDetail({
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         {hasPrs ? (
-          <Card className="min-w-0">
-            <CardHeader title={`${plural(merged.length, "pull request")} merged`} />
-            {merged.length > 0 ? (
-              <MergedPrList prs={merged} />
-            ) : (
-              <p className="m-0 px-[18px] pb-4 text-[13px] text-zinc-500 dark:text-zinc-400">None this period.</p>
-            )}
-          </Card>
+          <MergedPrCard title={`${plural(merged.length, "pull request")} merged`} prs={merged} />
         ) : prsLoading ? (
           <PrListSkeleton title="Merged pull requests" />
         ) : (
