@@ -1921,27 +1921,46 @@ pub async fn get_pr_insights(
     app: AppHandle,
     days: u32,
     force: Option<bool>,
+    sessions: State<'_, SessionsCache>,
     settings_cache: State<'_, SettingsCache>,
     repo_cache: State<'_, RepoCache>,
     github_cache: State<'_, GithubCache>,
     pr_cache: State<'_, InsightsPrCache>,
 ) -> Result<PrInsights, String> {
+    let claude_on = claude_enabled(&app, settings_cache.inner());
+    let sessions_cache = sessions.inner().clone();
     let settings_cache = settings_cache.inner().clone();
     let repo_cache = repo_cache.inner().clone();
     let github_cache = github_cache.inner().clone();
     let pr_cache = pr_cache.inner().clone();
     blocking(move || {
-        if !force.unwrap_or(false) {
-            if let Some((t, hit)) = pr_cache.0.lock().unwrap().get(&days) {
-                if t.elapsed() < INSIGHTS_PR_TTL {
-                    return Ok(hit.clone());
-                }
+        let cached = if force.unwrap_or(false) {
+            None
+        } else {
+            pr_cache
+                .0
+                .lock()
+                .unwrap()
+                .get(&days)
+                .filter(|(t, _)| t.elapsed() < INSIGHTS_PR_TTL)
+                .map(|(_, hit)| hit.clone())
+        };
+        let mut result = match cached {
+            Some(hit) => hit,
+            None => {
+                let repos = repo_index(&app, &settings_cache, &repo_cache)?;
+                let open = github_cache.get_or_fetch(&repos);
+                let fresh = scanners::insights::collect_prs(&repos, days, &open);
+                pr_cache.0.lock().unwrap().insert(days, (Instant::now(), fresh.clone()));
+                fresh
             }
+        };
+        // Costs come from local sessions, so they're joined on every call
+        // rather than frozen into the 5-minute gh cache.
+        if claude_on {
+            let sessions = scanners::sessions::scan_all(&sessions_cache).unwrap_or_default();
+            scanners::insights::attach_pr_costs(&mut result, &sessions);
         }
-        let repos = repo_index(&app, &settings_cache, &repo_cache)?;
-        let open = github_cache.get_or_fetch(&repos);
-        let result = scanners::insights::collect_prs(&repos, days, &open);
-        pr_cache.0.lock().unwrap().insert(days, (Instant::now(), result.clone()));
         Ok(result)
     })
     .await

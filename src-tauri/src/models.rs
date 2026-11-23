@@ -517,6 +517,9 @@ pub struct TokenUsage {
     pub cache_creation_1h: u64,
 }
 
+/// Branch → start of the minute (epoch ms) → spend in that minute.
+pub type BranchSpend = std::collections::BTreeMap<String, std::collections::BTreeMap<i64, f64>>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
@@ -548,6 +551,15 @@ pub struct Session {
     pub subagent_count: u32,
     #[serde(default)]
     pub subagent_cost_usd: f64,
+    /// Spend (USD) per git branch, from each assistant turn's `gitBranch`
+    /// (subagent turns included), bucketed by the minute the turn ran
+    /// (`BranchSpend`). A session that starts on `main` and moves to a
+    /// feature branch splits its spend between the two, and the timeline lets
+    /// Insights stop counting at a PR's merge, so work that carries on after
+    /// it isn't billed to that PR. Internal like `cost_by_day`: kept off IPC
+    /// and carried in the disk cache row instead.
+    #[serde(skip)]
+    pub cost_by_branch: BranchSpend,
     /// Tool name → call count for this session.
     pub tool_uses: std::collections::BTreeMap<String, u32>,
     /// Count of tool_result blocks where is_error=true.
@@ -1716,6 +1728,10 @@ pub struct RepoPrInsight {
     pub opened: u32,
     /// Open right now.
     pub open_now: u32,
+    /// The repo's default branch; PRs from it get no agent cost, since
+    /// sessions on it can't be told apart from everyday work.
+    #[serde(default)]
+    pub default_branch: Option<String>,
     /// Set when `gh` failed for this repo.
     pub error: Option<String>,
 }
@@ -1729,4 +1745,30 @@ pub struct InsightPr {
     pub author: String,
     pub created_at_ms: i64,
     pub merged_at_ms: i64,
+    /// Branch the PR merged from (`headRefName`).
+    #[serde(default)]
+    pub head_ref: String,
+    /// Claude Code spend on `head_ref` in this repo before the merge, summed
+    /// across every session that touched it (retries included). Filled per
+    /// request from the local session cache, so it's never stale.
+    #[serde(default)]
+    pub agent_cost_usd: f64,
+    #[serde(default)]
+    pub agent_sessions: Vec<PrSession>,
+}
+
+/// One Claude Code session that worked on a PR's branch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrSession {
+    pub id: String,
+    pub start_ts: i64,
+    pub end_ts: i64,
+    /// Spend on the PR's branch within the PR's window. Less than the
+    /// session's total when it also worked on other branches, or kept going
+    /// after the merge.
+    pub cost_usd: f64,
+    pub session_cost_usd: f64,
+    pub first_prompt: Option<String>,
+    pub model: Option<String>,
 }

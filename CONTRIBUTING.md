@@ -63,7 +63,7 @@ Small commits, [conventional commit](https://www.conventionalcommits.org/) messa
 
 ## Releases
 
-Releases are cut by the maintainer: they are signed and notarized with the maintainer's certificates, and the auto-updater only accepts builds signed with the updater key. You never need any of that to develop. [`RELEASE.md`](RELEASE.md) documents the pipeline if you want to produce signed builds of your own fork.
+Releases are cut by the maintainer: they are signed and notarized with the maintainer's certificates, and the auto-updater only accepts builds signed with the updater key. You never need any of that to develop. [`docs/RELEASE.md`](docs/RELEASE.md) documents the pipeline if you want to produce signed builds of your own fork.
 
 ## Code of conduct
 

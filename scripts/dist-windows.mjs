@@ -18,7 +18,7 @@ if (process.platform !== "win32") {
   console.error(`\n❌ Windows releases must be built on a Windows host (this is ${process.platform}).`);
   console.error("   Tauri can't cross-compile NSIS installers — no macOS/Linux path exists.");
   console.error("   Run `npm run dist:win` on a Windows machine, or use a windows-latest");
-  console.error("   CI runner. See RELEASE.md.\n");
+  console.error("   CI runner. See docs/RELEASE.md.\n");
   process.exit(1);
 }
 
