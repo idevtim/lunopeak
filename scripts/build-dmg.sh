@@ -395,3 +395,12 @@ else
     echo "     version \"$VERSION\"   sha256 \"$DMG_SHA256\""
   fi
 fi
+
+# ─── Clean up build caches ──────────────────────────────────────────────────
+# The release is done, so drop the per-arch caches it just filled (tens of GB)
+# rather than leaving them until the next version's build. Only reached on
+# success: a failed run exits above with its caches intact, so a retry stays
+# incremental. The universal bundle dir (DMG, .app, updater payload) is kept.
+if [ "${LUNOPEAK_PRUNE:-auto}" != "skip" ]; then
+  LUNOPEAK_PRUNE=force "$SCRIPT_DIR/prune-target.sh" "$VERSION"
+fi

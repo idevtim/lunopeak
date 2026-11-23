@@ -494,3 +494,13 @@ done
 
 echo "✅ Drafted v$VERSION on $RELEASE_REPO — review and publish from the Releases page."
 echo "    https://github.com/$RELEASE_REPO/releases/tag/v$VERSION"
+
+# ─── Clean up build caches ──────────────────────────────────────────────────
+# The release is uploaded, so drop the caches this build filled instead of
+# leaving them in target/ (or the Docker target volume) until the next one.
+# bundle/ with the .deb / .rpm / AppImage is kept. Not reached by a failed run
+# or by SKIP_RELEASE=1, which is usually a check before the real release and
+# should leave the caches warm for it.
+if [ "${LUNOPEAK_PRUNE:-auto}" != "skip" ]; then
+  LUNOPEAK_PRUNE=force "$SCRIPT_DIR/prune-target.sh" "$VERSION"
+fi

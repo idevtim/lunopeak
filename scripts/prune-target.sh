@@ -10,15 +10,19 @@
 # build cache EXCEPT the universal bundle dir the build script clears itself,
 # then records the version in target/.last-dist-version. Re-running the same
 # version (e.g. retrying after a notarization hiccup) skips the prune so the
-# retry stays incremental.
+# retry stays incremental. build-dmg.sh and build-linux.sh also run it with
+# LUNOPEAK_PRUNE=force once a release succeeds, so the caches that build
+# filled don't linger (build-windows.ps1 does the same in PowerShell).
 #
 # Wiped: debug/ and every <triple>/debug (the `tauri:dev` / test cache —
 # the next dev run recompiles once), release/ (plain `tauri:build`, unused by
 # the universal DMG), and <triple>/release (rebuilt clean for the release).
+# A release dir's bundle/ is kept: the Linux and Windows installers live
+# there, and the build scripts clear it themselves before bundling.
 #
 # Usage: prune-target.sh <version>
 #   LUNOPEAK_PRUNE=force  prune even if the version hasn't changed
-#   LUNOPEAK_PRUNE=skip   never prune
+#   LUNOPEAK_PRUNE=skip   never prune (before or after the build)
 set -euo pipefail
 
 VERSION="${1:?usage: prune-target.sh <version>}"
@@ -48,8 +52,14 @@ for dir in "$TARGET_DIR"/debug "$TARGET_DIR"/release "$TARGET_DIR"/*/debug "$TAR
   # build-dmg.sh manages itself.
   case "$dir" in */universal-apple-darwin/*) continue ;; esac
   [ -d "$dir" ] || continue
-  echo "   rm $(basename "$(dirname "$dir")")/$(basename "$dir") ($(du -sh "$dir" | cut -f1))"
-  rm -rf "$dir"
+  name="$(basename "$(dirname "$dir")")/$(basename "$dir")"
+  if [ -d "$dir/bundle" ]; then
+    echo "   rm $name, keeping bundle/ ($(du -sh "$dir" | cut -f1) before)"
+    find "$dir" -mindepth 1 -maxdepth 1 ! -name bundle -exec rm -rf {} +
+  else
+    echo "   rm $name ($(du -sh "$dir" | cut -f1))"
+    rm -rf "$dir"
+  fi
 done
 
 echo "$VERSION" > "$STAMP"

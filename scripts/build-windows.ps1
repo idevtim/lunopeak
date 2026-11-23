@@ -402,3 +402,35 @@ foreach ($b in $bundles) {
 }
 if ($signingEnabled) { Write-Host "     - latest.json" }
 Write-Host "     https://github.com/$ReleaseRepo/releases/tag/v$pkgVersion"
+
+# --- Clean up build caches ---------------------------------------------------
+# The release is uploaded, so drop the caches this build filled instead of
+# leaving them in target\ until the next one. Mirrors scripts/prune-target.sh:
+# every debug\ and release\ dir goes, except that a release dir keeps its
+# bundle\ (the installers). Not reached by a failed
+# run, which keeps its caches so a retry stays incremental.
+# LUNOPEAK_PRUNE=skip leaves target\ alone.
+if ($env:LUNOPEAK_PRUNE -ne 'skip') {
+  $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $ProjectDir 'src-tauri\target' }
+  if (Test-Path $targetDir) {
+    Write-Host ""
+    Write-Host "[*] Pruning build caches in $targetDir..."
+    $dirs = @((Join-Path $targetDir 'debug'), (Join-Path $targetDir 'release'))
+    $dirs += Get-ChildItem -Path $targetDir -Directory | ForEach-Object {
+      (Join-Path $_.FullName 'debug'), (Join-Path $_.FullName 'release')
+    }
+    foreach ($d in $dirs) {
+      if (-not (Test-Path $d -PathType Container)) { continue }
+      $name = "$(Split-Path -Leaf (Split-Path -Parent $d))\$(Split-Path -Leaf $d)"
+      if (Test-Path (Join-Path $d 'bundle') -PathType Container) {
+        Write-Host "    rm $name, keeping bundle\"
+        Get-ChildItem -Path $d -Force | Where-Object { $_.Name -ne 'bundle' } |
+          Remove-Item -Recurse -Force -ErrorAction Continue
+      } else {
+        Write-Host "    rm $name"
+        Remove-Item -Recurse -Force -Path $d -ErrorAction Continue
+      }
+    }
+    Write-Host "[OK] Build caches pruned"
+  }
+}
