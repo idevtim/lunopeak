@@ -1,7 +1,7 @@
 use crate::models::{
     CommandEntry, CostBreakdown, CostBucket, CostTotals, DayBucket, ErrorEntry, FileEntry,
     ModelUsage, RepoCost, RepoCostDetail, SequenceEntry, Session, SessionDetail, SessionEvent,
-    SessionStats, TokenUsage, ToolBreakdown, ToolStats, TranscriptMatch,
+    SessionStats, TokenUsage, BranchSpend, ToolBreakdown, ToolStats, TranscriptMatch,
 };
 use crate::pricing;
 use anyhow::Result;
@@ -61,11 +61,12 @@ type Stamp = (SystemTime, usize);
 /// Bumped with the app version, so any release that changes what
 /// `parse_session_file` extracts re-parses once instead of serving stale
 /// sessions. Bump the suffix for parser changes made between releases.
-const DISK_CACHE_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "/2");
+const DISK_CACHE_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "/3");
 
-/// On-disk row: `Session::cost_by_day` is `#[serde(skip)]` (kept off IPC), so
-/// it travels alongside the session rather than inside it.
-type DiskRow = (PathBuf, Stamp, Option<Session>, BTreeMap<NaiveDate, f64>);
+/// On-disk row: `Session::cost_by_day` and `Session::cost_by_branch` are
+/// `#[serde(skip)]` (kept off IPC), so they travel alongside the session
+/// rather than inside it.
+type DiskRow = (PathBuf, Stamp, Option<Session>, BTreeMap<NaiveDate, f64>, BranchSpend);
 
 impl Cache {
     pub fn new() -> Self {
@@ -84,9 +85,10 @@ fn read_disk_cache() -> HashMap<PathBuf, CacheEntry> {
     match serde_json::from_slice::<(String, Vec<DiskRow>)>(&raw) {
         Ok((version, rows)) if version == DISK_CACHE_VERSION => rows
             .into_iter()
-            .map(|(path, stamp, mut session, cost_by_day)| {
+            .map(|(path, stamp, mut session, cost_by_day, cost_by_branch)| {
                 if let Some(s) = session.as_mut() {
                     s.cost_by_day = cost_by_day;
+                    s.cost_by_branch = cost_by_branch;
                 }
                 (path, CacheEntry { stamp, session })
             })
@@ -100,11 +102,13 @@ fn write_disk_cache(entries: &HashMap<PathBuf, CacheEntry>) {
         return;
     };
     let no_days = BTreeMap::new();
+    let no_branches = BranchSpend::new();
     let rows: Vec<_> = entries
         .iter()
         .map(|(p, e)| {
             let days = e.session.as_ref().map_or(&no_days, |s| &s.cost_by_day);
-            (p, &e.stamp, &e.session, days)
+            let branches = e.session.as_ref().map_or(&no_branches, |s| &s.cost_by_branch);
+            (p, &e.stamp, &e.session, days, branches)
         })
         .collect();
     let Ok(payload) = serde_json::to_vec(&(DISK_CACHE_VERSION, rows)) else {
@@ -135,7 +139,7 @@ fn parse_session_file(path: &Path, subagents: &[PathBuf]) -> Option<Session> {
     let mut usage = TokenUsage::default();
     let mut cost = 0.0_f64;
     let mut cost_by_day: BTreeMap<NaiveDate, f64> = BTreeMap::new();
-    let mut cost_by_branch: BTreeMap<String, f64> = BTreeMap::new();
+    let mut cost_by_branch = BranchSpend::new();
     // Branch of the latest line that named one; a turn without `gitBranch`
     // is billed to it.
     let mut cur_branch: Option<String> = None;
@@ -223,8 +227,8 @@ fn parse_session_file(path: &Path, subagents: &[PathBuf]) -> Option<Session> {
                     if let Some(day) = timestamp.or(start_ts).and_then(millis_to_local_date) {
                         *cost_by_day.entry(day).or_insert(0.0) += turn_cost;
                     }
-                    if let Some(b) = cur_branch.as_deref().filter(|b| is_named_branch(b)) {
-                        *cost_by_branch.entry(b.to_string()).or_insert(0.0) += turn_cost;
+                    if let (Some(b), Some(ts)) = (cur_branch.as_deref(), timestamp.or(start_ts)) {
+                        add_branch_spend(&mut cost_by_branch, b, ts, turn_cost);
                     }
                 }
                 add_usage(&mut usage, &turn);
@@ -462,7 +466,7 @@ fn add_subagent_spend(
     usage: &mut TokenUsage,
     mut cost_by_day: Option<&mut BTreeMap<NaiveDate, f64>>,
     // Per-branch totals, and the parent's branch for turns that lack one.
-    mut cost_by_branch: Option<(&mut BTreeMap<String, f64>, Option<&str>)>,
+    mut cost_by_branch: Option<(&mut BranchSpend, Option<&str>)>,
 ) -> f64 {
     let Ok(file) = File::open(path) else {
         return 0.0;
@@ -499,8 +503,8 @@ fn add_subagent_spend(
         }
         if let Some((branches, fallback)) = cost_by_branch.as_mut() {
             let b = value.get("gitBranch").and_then(|v| v.as_str()).or(*fallback);
-            if let Some(b) = b.filter(|b| is_named_branch(b)) {
-                *branches.entry(b.to_string()).or_insert(0.0) += turn_cost;
+            if let (Some(b), Some(ts)) = (b, ts) {
+                add_branch_spend(branches, b, ts, turn_cost);
             }
         }
     }
@@ -511,6 +515,19 @@ fn add_subagent_spend(
 /// an empty string outside a repo.
 fn is_named_branch(b: &str) -> bool {
     !b.is_empty() && b != "HEAD"
+}
+
+/// `Session::cost_by_branch` granularity. Fine enough that work carrying on
+/// right after a PR merges isn't billed to it, coarse enough to keep the
+/// disk cache small.
+const BRANCH_BUCKET_MS: i64 = 60_000;
+
+fn add_branch_spend(spend: &mut BranchSpend, branch: &str, ts: i64, cost: f64) {
+    if !is_named_branch(branch) {
+        return;
+    }
+    let minute = ts.div_euclid(BRANCH_BUCKET_MS) * BRANCH_BUCKET_MS;
+    *spend.entry(branch.to_string()).or_default().entry(minute).or_insert(0.0) += cost;
 }
 
 /// Splits a Bash command string into the first meaningful token. Drops common
@@ -1780,12 +1797,16 @@ mod tests {
         std::fs::write(&sub, assistant_line("2026-10-20T12:01:00.000Z", "claude-sonnet-5-5", 1_000, 100)).unwrap();
 
         let s = parse_session_file(&main, &[sub]).unwrap();
-        let one = s.cost_by_branch["main"];
+        let total = |b: &str| s.cost_by_branch[b].values().sum::<f64>();
+        let one = total("main");
         assert!(one > 0.0);
         assert_eq!(s.branch.as_deref(), Some("main"));
         // "fix/login" turn, plus the subagent turn (falls back to "HEAD" → dropped).
-        assert!((s.cost_by_branch["fix/login"] - one).abs() < 1e-9);
+        assert!((total("fix/login") - one).abs() < 1e-9);
         assert!(!s.cost_by_branch.contains_key("HEAD"));
+        // Spend is keyed by the minute the turn ran.
+        let noon = parse_iso_ts("2026-10-20T12:00:00.000Z").unwrap();
+        assert_eq!(s.cost_by_branch["main"].keys().copied().collect::<Vec<_>>(), [noon]);
     }
 
     /// Subagent transcripts live in `<session-id>/subagents/` and their spend

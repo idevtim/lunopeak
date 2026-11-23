@@ -529,15 +529,17 @@ pub fn collect_prs(repos: &[(String, String)], days: u32, open: &PullRequestList
 
 // ── What each PR cost ─────────────────────────────────────────────────
 
-/// How far before a PR opened its branch's sessions still count. Retries
+/// How far before a PR opened its branch's spend still counts. Retries
 /// usually start days before the PR, but a branch name reused months later
 /// ("fix-tests") shouldn't inherit the old spend.
 const PR_LOOKBACK_MS: i64 = 14 * 24 * 3600 * 1000;
 
-/// Fill each merged PR's agent cost from Claude sessions on its head branch:
-/// same repo, started before the merge and no earlier than the previous
-/// merge of the same branch name (or `PR_LOOKBACK_MS` before it opened).
-/// Only the spend on that branch counts, so a session that also did other
+/// Fill each merged PR's agent cost from Claude sessions' spend on its head
+/// branch in the same repo. Only spend from after the previous merge of the
+/// same branch name (or `PR_LOOKBACK_MS` before the PR opened) up to this
+/// PR's merge counts, minute by minute (`Session::cost_by_branch`), so a
+/// session that keeps going on the branch after a merge bills the rest to
+/// the next PR from it, or to nothing, and a session that also did other
 /// work is split. Runs on every request over the cached `gh` data, so
 /// sessions that finish after the PR list was fetched still show up.
 pub fn attach_pr_costs(prs: &mut PrInsights, sessions: &[Session]) {
@@ -565,16 +567,26 @@ pub fn attach_pr_costs(prs: &mut PrInsights, sessions: &[Session]) {
             if pr.head_ref.is_empty() || repo.default_branch.as_deref() == Some(pr.head_ref.as_str()) {
                 continue;
             }
+            // `created_at_ms` is 0 when gh's timestamp didn't parse; measure
+            // the lookback from the merge then, rather than from 1970.
+            let opened = if pr.created_at_ms > 0 { pr.created_at_ms } else { pr.merged_at_ms };
             let after = last_merge
                 .get(&pr.head_ref)
                 .copied()
                 .unwrap_or(i64::MIN)
-                .max(pr.created_at_ms - PR_LOOKBACK_MS);
+                .max(opened - PR_LOOKBACK_MS);
+            last_merge.insert(pr.head_ref.clone(), pr.merged_at_ms);
+            if after >= pr.merged_at_ms {
+                continue;
+            }
             for s in &mine {
-                if s.start_ts <= after || s.start_ts > pr.merged_at_ms {
+                let Some(minutes) = s.cost_by_branch.get(&pr.head_ref) else { continue };
+                let (turns, cost) = minutes
+                    .range(after + 1..=pr.merged_at_ms)
+                    .fold((0usize, 0.0_f64), |(n, c), (_, v)| (n + 1, c + v));
+                if turns == 0 {
                     continue;
                 }
-                let Some(&cost) = s.cost_by_branch.get(&pr.head_ref) else { continue };
                 pr.agent_cost_usd += cost;
                 pr.agent_sessions.push(PrSession {
                     id: s.id.clone(),
@@ -587,7 +599,6 @@ pub fn attach_pr_costs(prs: &mut PrInsights, sessions: &[Session]) {
                 });
             }
             pr.agent_sessions.sort_by_key(|s| s.start_ts);
-            last_merge.insert(pr.head_ref.clone(), pr.merged_at_ms);
         }
     }
 }
@@ -667,7 +678,13 @@ mod tests {
         assert!(!in_repo("/a/repo2", "/a/repo"));
     }
 
-    fn session(id: &str, project: &str, start_ts: i64, branches: &[(&str, f64)]) -> Session {
+    /// `spend` is (branch, minute ms, cost); `start_ts` is the earliest minute.
+    fn session(id: &str, project: &str, spend: &[(&str, i64, f64)]) -> Session {
+        let start_ts = spend.iter().map(|x| x.1).min().unwrap_or(0);
+        let mut cost_by_branch = crate::models::BranchSpend::new();
+        for &(b, t, c) in spend {
+            *cost_by_branch.entry(b.into()).or_default().entry(t).or_insert(0.0) += c;
+        }
         Session {
             id: id.into(),
             project_path: Some(project.into()),
@@ -679,11 +696,11 @@ mod tests {
             message_count: 0,
             first_prompt: None,
             usage: Default::default(),
-            cost_usd: branches.iter().map(|b| b.1).sum(),
+            cost_usd: spend.iter().map(|x| x.2).sum(),
             cost_by_day: Default::default(),
             subagent_count: 0,
             subagent_cost_usd: 0.0,
-            cost_by_branch: branches.iter().map(|(b, c)| (b.to_string(), *c)).collect(),
+            cost_by_branch,
             tool_uses: Default::default(),
             tool_errors: 0,
             tool_errors_by_name: Default::default(),
@@ -727,22 +744,26 @@ mod tests {
                 error: None,
             }],
         };
+        const MIN: i64 = 60_000;
         let sessions = vec![
-            session("a", "/r", t0 - DAY, &[("fix", 2.0)]),             // first attempt
-            session("b", "/r/sub", t0 + DAY / 2, &[("fix", 3.0), ("main", 9.0)]), // retry, split
-            session("c", "/r", t0 + 4 * DAY, &[("fix", 5.0)]),         // second PR
-            session("d", "/r", t0 + 7 * DAY, &[("fix", 7.0)]),         // after merge
-            session("e", "/other", t0, &[("fix", 11.0)]),              // other repo
-            session("f", "/r", t0 - 30 * DAY, &[("fix", 13.0)]),       // too old
+            session("a", "/r", &[("fix", t0 - DAY, 2.0)]), // first attempt
+            session("b", "/r/sub", &[("fix", t0 + DAY / 2, 3.0), ("main", t0 + DAY / 2 + MIN, 9.0)]), // retry, split
+            // Kept going on the branch after PR 1 merged: the rest is PR 2's.
+            session("g", "/r", &[("fix", t0 + DAY - MIN, 1.0), ("fix", t0 + DAY + MIN, 4.0)]),
+            session("c", "/r", &[("fix", t0 + 4 * DAY, 5.0)]), // second PR
+            session("d", "/r", &[("fix", t0 + 7 * DAY, 7.0)]), // after merge
+            session("e", "/other", &[("fix", t0, 11.0)]),      // other repo
+            session("f", "/r", &[("fix", t0 - 30 * DAY, 13.0)]), // too old
         ];
         attach_pr_costs(&mut prs, &sessions);
         let m = &prs.repos[0].merged;
         let ids = |p: &InsightPr| p.agent_sessions.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
-        assert_eq!(ids(&m[1]), ["a", "b"]);
-        assert_eq!(m[1].agent_cost_usd, 5.0);
+        assert_eq!(ids(&m[1]), ["a", "b", "g"]);
+        assert_eq!(m[1].agent_cost_usd, 6.0);
         assert_eq!(m[1].agent_sessions[1].session_cost_usd, 12.0);
-        assert_eq!(ids(&m[0]), ["c"]);
-        assert_eq!(m[0].agent_cost_usd, 5.0);
+        assert_eq!(m[1].agent_sessions[2].cost_usd, 1.0);
+        assert_eq!(ids(&m[0]), ["g", "c"]);
+        assert_eq!(m[0].agent_cost_usd, 9.0);
         assert!(m[2].agent_sessions.is_empty(), "default branch PRs get no cost");
     }
 

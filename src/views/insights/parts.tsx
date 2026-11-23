@@ -261,7 +261,7 @@ function PrSessions({ pr }: { pr: MergedPr }) {
                   <span className="truncate text-[13px] text-zinc-800 dark:text-zinc-200">{s.firstPrompt || "Untitled session"}</span>
                   <span className="text-xs text-zinc-500 dark:text-zinc-400">
                     {timeFmt.format(s.startTs)} · {formatSpan(Math.max(0, s.endTs - s.startTs))}
-                    {shared && ` · ${formatUsd(s.sessionCostUsd)} session, part on other branches`}
+                    {shared && ` · ${formatUsd(s.sessionCostUsd)} session, part on other work`}
                   </span>
                 </span>
                 <Mono className="shrink-0 text-[13px] text-zinc-800 dark:text-zinc-200">{formatUsd(s.costUsd)}</Mono>

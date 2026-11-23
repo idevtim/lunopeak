@@ -228,8 +228,6 @@ export interface Session {
   /** Subagent transcripts (`<id>/subagents/agent-*.jsonl`) rolled into this session. */
   subagentCount: number;
   subagentCostUsd: number;
-  /** Cost per git branch, from each turn's `gitBranch` (subagents included). */
-  costByBranch?: Record<string, number>;
   /** file_path → number of Edit/Write/NotebookEdit invocations. May be empty. */
   filesEdited?: Record<string, number>;
 }
@@ -1128,9 +1126,9 @@ export interface PrSession {
   id: string;
   startTs: number;
   endTs: number;
-  /** Spend on the PR's branch only. */
+  /** Spend on the PR's branch, between the previous merge of that branch name and this PR's merge. */
   costUsd: number;
-  /** The whole session's spend, other branches included. */
+  /** The whole session's spend, other branches and work after the merge included. */
   sessionCostUsd: number;
   firstPrompt: string | null;
   model: string | null;

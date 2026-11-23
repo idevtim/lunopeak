@@ -517,6 +517,9 @@ pub struct TokenUsage {
     pub cache_creation_1h: u64,
 }
 
+/// Branch → start of the minute (epoch ms) → spend in that minute.
+pub type BranchSpend = std::collections::BTreeMap<String, std::collections::BTreeMap<i64, f64>>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
@@ -548,12 +551,15 @@ pub struct Session {
     pub subagent_count: u32,
     #[serde(default)]
     pub subagent_cost_usd: f64,
-    /// Cost (USD) per git branch, from each assistant turn's `gitBranch`
-    /// (subagent turns included). A session that starts on `main` and moves
-    /// to a feature branch splits its spend between the two, which is what
-    /// lets Insights total what a pull request cost to land.
-    #[serde(default)]
-    pub cost_by_branch: std::collections::BTreeMap<String, f64>,
+    /// Spend (USD) per git branch, from each assistant turn's `gitBranch`
+    /// (subagent turns included), bucketed by the minute the turn ran
+    /// (`BranchSpend`). A session that starts on `main` and moves to a
+    /// feature branch splits its spend between the two, and the timeline lets
+    /// Insights stop counting at a PR's merge, so work that carries on after
+    /// it isn't billed to that PR. Internal like `cost_by_day`: kept off IPC
+    /// and carried in the disk cache row instead.
+    #[serde(skip)]
+    pub cost_by_branch: BranchSpend,
     /// Tool name → call count for this session.
     pub tool_uses: std::collections::BTreeMap<String, u32>,
     /// Count of tool_result blocks where is_error=true.
@@ -1758,8 +1764,9 @@ pub struct PrSession {
     pub id: String,
     pub start_ts: i64,
     pub end_ts: i64,
-    /// Spend on the PR's branch only. Less than the session's total when it
-    /// also worked on other branches.
+    /// Spend on the PR's branch within the PR's window. Less than the
+    /// session's total when it also worked on other branches, or kept going
+    /// after the merge.
     pub cost_usd: f64,
     pub session_cost_usd: f64,
     pub first_prompt: Option<String>,
