@@ -4,7 +4,7 @@
 
 # LunoPeak
 
-![Version](https://img.shields.io/badge/version-2.4.0-blue.svg)
+![Version](https://img.shields.io/badge/version-2.5.0-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-ff69b4.svg)](https://github.com/sponsors/idevtim)
@@ -43,7 +43,7 @@ All builds auto-update except Linux RPM (manual). What changed in each version i
 
 ### Code Intelligence
 - **Repos** — every project on your machine with health and AI-usage signals
-- **Insights** — GitHub-style Pulse across every repo: commits, merged pull requests, lines changed, time to merge, and agent co-authored commits, with a page per repo
+- **Insights** — GitHub-style Pulse across every repo: commits, merged pull requests, lines changed, time to merge, agent co-authored commits, and what each merged pull request cost in Claude Code sessions, with a page per repo
 - **Repo Detail** — CLAUDE.md preview, skills, branches, quick actions (open in Claude / VS Code / terminal, git pull)
 - **Work Graph** — relationships between repos, branches, and active work
 - **Timeline** — cross-repo commits, sessions, and key events
