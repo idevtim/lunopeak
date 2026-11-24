@@ -1,7 +1,7 @@
 /**
  * Catalog of editors / IDEs that LunoPeak knows how to launch through the
  * `open_path_in_editor` Tauri command. Keep ids in sync with the Rust spec
- * in `src-tauri/src/scanners/processes.rs`.
+ * in `src-tauri/crates/core/src/scanners/processes.rs`.
  *
  * Platform notes:
  *  - macOS: every editor falls back to `open -a "<App>"` if its CLI shim

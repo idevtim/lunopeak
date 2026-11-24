@@ -3,16 +3,17 @@ mod commands;
 mod logger;
 #[cfg(target_os = "macos")]
 mod macos_agent;
-mod models;
-mod pricing;
-mod process_ext;
-mod scanners;
 mod settings;
-mod statusline;
+mod snapshots;
 mod tray;
 #[cfg(target_os = "macos")]
 mod tray_popover;
 mod updates;
+
+// Scanners, models, pricing and the status line live in `lunopeak-core` so the
+// headless node shares them; re-exported here so `crate::scanners::…` paths
+// read the same as before the split.
+pub(crate) use lunopeak_core::{elog, is_menubar_agent, models, process_ext, scanners, statusline};
 
 use commands::{AuditCache, GithubCache, InsightsPrCache, RepoCache, SettingsCache};
 use scanners::codex::Cache as CodexCache;
@@ -27,17 +28,6 @@ use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 /// process spawn and a few file reads, nothing more.
 pub fn statusline_cli(args: &[String]) -> i32 {
     statusline::run_cli(args)
-}
-
-/// Set once at startup in the macOS menu-bar agent process. Each process's
-/// Keychain reads prompt separately (the agent is its own bundle identity),
-/// so secrets are split by owner: the window reads the API keys, the agent
-/// reads the browser cookies. Always false on Windows/Linux, where one
-/// process does everything.
-static MENUBAR_AGENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-pub(crate) fn is_menubar_agent() -> bool {
-    MENUBAR_AGENT.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 pub fn run() {
@@ -71,7 +61,7 @@ pub fn run() {
     let menubar_mode =
         std::env::args().any(|a| a == "--menubar" || a == "--from-autostart");
     #[cfg(target_os = "macos")]
-    MENUBAR_AGENT.store(menubar_mode, std::sync::atomic::Ordering::Relaxed);
+    lunopeak_core::set_menubar_agent(menubar_mode);
     #[cfg(target_os = "macos")]
     macos_agent::debug_log(&format!(
         "run() start: menubar_mode={menubar_mode} exe={:?} args={:?}",

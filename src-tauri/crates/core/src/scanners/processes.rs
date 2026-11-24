@@ -86,6 +86,7 @@ pub fn scan() -> Vec<ActiveProcess> {
             continue;
         };
         out.push(ActiveProcess {
+            host: None,
             pid: pid.as_u32(),
             name,
             cwd: final_cwd,

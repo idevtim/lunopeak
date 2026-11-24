@@ -9,6 +9,9 @@ homepage = "https://lunopeak.com"
 edition = "2021"
 rust-version = "1.90"
 
+[workspace]
+members = ["crates/core", "crates/node"]
+
 [lib]
 name = "lunopeak_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -24,6 +27,9 @@ tauri-build = { version = "2", features = [] }
 tempfile = "3"
 
 [dependencies]
+# Scanners, models, pricing and the status line — shared with lunopeak-node.
+lunopeak-core = { path = "crates/core" }
+
 tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
@@ -43,10 +49,8 @@ anyhow = "1"
 thiserror = "2"
 
 # Scanning + watching
-walkdir = "2"
 ignore = "0.4"
 notify = "7"
-sysinfo = "0.32"
 rayon = "1"
 
 # Storage
@@ -56,37 +60,17 @@ rayon = "1"
 # Credential Manager, sync-secret-service = Linux Secret Service via DBus.
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 dirs = "5"
-# Edits ~/.codex/config.toml in place (status line opt-in) without
-# discarding the user's comments, ordering or formatting.
-toml_edit = "0.25"
 
 # Utility
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
-# Cursor stores chat history in a SQLite database (state.vscdb). `bundled`
-# links libsqlite3 statically so we don't depend on the host's version.
-# Pinned to 0.31 to match the version `rookie` bundles — cargo only allows
-# one crate in the graph to claim `links = "sqlite3"`, so both must agree.
-rusqlite = { version = "0.31", features = ["bundled"] }
-
-# Browser-cookie extraction for the Cursor web API path (cursor.com doesn't
-# publish a CLI/API key flow; we ride the user's existing browser session).
-# Reads from Chrome / Edge / Brave / Arc / Firefox / Safari / etc., decrypting
-# Chromium cookies via the OS keychain — this triggers a one-time Keychain
-# prompt on macOS the first time the user enables the Cursor web source.
-rookie = "0.5"
-
 # System dark/light mode detection. On Windows the tray (taskbar) theme is
 # a separate registry value from the app theme, so we can't piggyback on
 # Tauri's webview theme — dark-light reads SystemUsesLightTheme directly.
 dark-light = "2"
 
-# Codex 0.163+ zstd-compresses its rollouts (`rollout-*.jsonl.zst`). A pure-
-# Rust decoder keeps the Windows cross-compile and the Linux container build
-# free of a C toolchain for libzstd.
-ruzstd = "0.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # The tray popover is a system NSPopover hosting the panel's webview (see

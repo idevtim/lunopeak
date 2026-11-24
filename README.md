@@ -116,7 +116,7 @@ npm run tauri:dev     # full app; the first Rust compile takes a few minutes
 |---|---|
 | `npm run typecheck` | TypeScript check |
 | `npm run build` | Typecheck + Vite production build |
-| `cd src-tauri && cargo test` | Rust tests |
+| `cd src-tauri && cargo test --workspace` | Rust tests (app, core, node) |
 | `npm run tauri:build` | Unsigned platform bundles in `src-tauri/target/release/bundle/` |
 
 Signed, notarized, auto-updating releases use the maintainer's certificates and keys; [`docs/RELEASE.md`](docs/RELEASE.md) documents that pipeline if you want to run your own.

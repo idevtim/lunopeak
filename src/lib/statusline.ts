@@ -1,6 +1,6 @@
 import type { StatuslinePrefs } from "@/types/api";
 
-/** Mirrors `StatuslinePrefs::default()` in `src-tauri/src/models.rs`. */
+/** Mirrors `StatuslinePrefs::default()` in `src-tauri/crates/core/src/models.rs`. */
 export const defaultStatuslinePrefs: StatuslinePrefs = {
   segments: [
     { id: "context", enabled: true },
@@ -23,5 +23,5 @@ export const defaultStatuslinePrefs: StatuslinePrefs = {
   owl: true,
 };
 
-/** Mirrors `OWL_FLAP` in `src-tauri/src/statusline.rs`: one frame a second while working. */
+/** Mirrors `OWL_FLAP` in `src-tauri/crates/core/src/statusline.rs`: one frame a second while working. */
 export const OWL_FLAP = ["\\{o,o}/", "/{o,o}\\", "\\{o,o}/", "/{o,o}\\", "\\{o,o}/", "/{-,-}\\"];

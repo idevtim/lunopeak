@@ -15,6 +15,5 @@ pub mod live_cursor;
 pub mod ports;
 pub mod processes;
 pub mod sessions;
-pub mod snapshots;
 pub mod status;
 pub mod usage;

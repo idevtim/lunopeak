@@ -22,7 +22,7 @@ All three must pass:
 ```sh
 npm run typecheck
 npm run build
-cd src-tauri && cargo test
+cd src-tauri && cargo test --workspace
 ```
 
 And run the app (`npm run tauri:dev`) to see the change working. Say in the PR which OS you tested on — LunoPeak ships on macOS, Windows and Linux, and the tray, window chrome and process scanning all differ between them.
@@ -32,7 +32,7 @@ And run the app (`npm run tauri:dev`) to see the change working. Say in the PR w
 [`CLAUDE.md`](CLAUDE.md) is the map: commands, architecture, conventions and gotchas, kept short enough to read in one sitting. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) goes deeper on each subsystem. The rules that catch people most often:
 
 - **Routes live in `src/routes.ts`.** The sidebar, the hash router and view registration all derive from it.
-- **The IPC boundary is typed on both sides.** Rust models in `src-tauri/src/models.rs` use `#[serde(rename_all = "camelCase")]` and are mirrored 1:1 in `src/types/api.ts`. Change one, change the other.
+- **The IPC boundary is typed on both sides.** Rust models in `src-tauri/crates/core/src/models.rs` use `#[serde(rename_all = "camelCase")]` and are mirrored 1:1 in `src/types/api.ts`. Change one, change the other.
 - **New Tauri commands must be allowed** in `src-tauri/capabilities/default.json`, or they fail at runtime, not at build time.
 - **The frontend must keep working without Tauri.** Every new `api.*` call needs a sensible fallback in `src/lib/tauri.ts`.
 - **Async views ship a skeleton.** Export a `<ViewNameSkeleton />` shaped like the real content and gate it with `useDelayedLoading`.

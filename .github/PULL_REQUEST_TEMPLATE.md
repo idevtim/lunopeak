@@ -6,7 +6,7 @@
 2. 
 
 ## Checklist
-- [ ] `npm run typecheck`, `npm run build` and `cargo test` (in `src-tauri/`) pass
+- [ ] `npm run typecheck`, `npm run build` and `cargo test --workspace` (in `src-tauri/`) pass
 - [ ] Ran the app and saw the change working — tested on: <!-- macOS / Windows / Linux -->
 - [ ] New Tauri commands are allowed in `src-tauri/capabilities/default.json`
 - [ ] Rust models and `src/types/api.ts` still match 1:1

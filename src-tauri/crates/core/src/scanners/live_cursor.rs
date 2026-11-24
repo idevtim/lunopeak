@@ -81,6 +81,7 @@ pub fn collect(limit: usize) -> LiveActivity {
                 continue;
             }
             events.push(LiveEvent {
+                host: None,
                 ts: bubble.ts,
                 session_id: composer.id.clone(),
                 cwd: composer.cwd.clone(),
@@ -100,6 +101,7 @@ pub fn collect(limit: usize) -> LiveActivity {
         sessions.insert(
             composer.id.clone(),
             SessionLiveState {
+                host: None,
                 session_id: composer.id,
                 cwd: composer.cwd,
                 last_ts: session_last_ts,
@@ -158,6 +160,7 @@ pub fn contexts(procs: &[ActiveProcess]) -> Vec<LiveContext> {
         .into_iter()
         .filter(|c| !c.archived && c.last_updated_ms.unwrap_or(0) >= cutoff_ms)
         .map(|c| LiveContext {
+            host: None,
             agent: "cursor".to_string(),
             session_id: c.id,
             pid: Some(pid),

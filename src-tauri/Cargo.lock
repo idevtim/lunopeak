@@ -2988,19 +2988,16 @@ dependencies = [
  "glib",
  "ignore",
  "keyring",
+ "lunopeak-core",
  "notify",
  "objc2 0.6.5",
  "objc2-app-kit",
  "objc2-foundation 0.3.2",
  "rayon",
  "reqwest 0.12.28",
- "rookie",
- "rusqlite",
- "ruzstd",
  "serde",
  "serde_json",
  "signal-hook",
- "sysinfo",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
@@ -3015,10 +3012,39 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "uuid",
+ "window-vibrancy 0.6.0",
+]
+
+[[package]]
+name = "lunopeak-core"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dirs 5.0.1",
+ "rayon",
+ "reqwest 0.12.28",
+ "rookie",
+ "rusqlite",
+ "ruzstd",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tempfile",
  "toml_edit 0.25.17+spec-1.1.0",
  "uuid",
  "walkdir",
- "window-vibrancy 0.6.0",
+]
+
+[[package]]
+name = "lunopeak-node"
+version = "0.0.0"
+dependencies = [
+ "lunopeak-core",
+ "serde",
+ "serde_json",
+ "sysinfo",
 ]
 
 [[package]]

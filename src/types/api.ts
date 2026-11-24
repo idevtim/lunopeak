@@ -1,4 +1,4 @@
-// Frontend mirror of Rust models in src-tauri/src/models.rs
+// Frontend mirror of Rust models in src-tauri/crates/core/src/models.rs
 
 export interface Repo {
   id: string;
@@ -213,6 +213,9 @@ export interface TokenUsage {
 }
 
 export interface Session {
+  /** Machine this row came from; absent for this machine. Set from a
+   *  remote node's snapshot, never by the local scanners. */
+  host?: string | null;
   id: string;
   projectPath: string | null;
   projectName: string | null;
@@ -371,6 +374,9 @@ export interface RepoCostDetail {
 }
 
 export interface ActiveProcess {
+  /** Machine this row came from; absent for this machine. Set from a
+   *  remote node's snapshot, never by the local scanners. */
+  host?: string | null;
   pid: number;
   name: string;
   cwd: string | null;
@@ -381,6 +387,9 @@ export interface ActiveProcess {
 export type LiveAgent = "claude" | "codex" | "cursor";
 
 export interface LiveEvent {
+  /** Machine this row came from; absent for this machine. Set from a
+   *  remote node's snapshot, never by the local scanners. */
+  host?: string | null;
   ts: number;
   sessionId: string;
   cwd: string | null;
@@ -400,6 +409,9 @@ export interface LiveTodo {
 }
 
 export interface SessionLiveState {
+  /** Machine this row came from; absent for this machine. Set from a
+   *  remote node's snapshot, never by the local scanners. */
+  host?: string | null;
   sessionId: string;
   cwd: string | null;
   lastTs: number;
@@ -433,6 +445,9 @@ export interface LiveActivity {
 
 /** Context-window fill for one running agent session. */
 export interface LiveContext {
+  /** Machine this row came from; absent for this machine. Set from a
+   *  remote node's snapshot, never by the local scanners. */
+  host?: string | null;
   agent: LiveAgent;
   sessionId: string;
   pid: number | null;

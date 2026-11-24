@@ -7,6 +7,7 @@ use crate::models::{
     TranscriptMatch,
     UsageLimits, WorktreeEntry, RepoInsights, PrInsights,
 };
+use lunopeak_core::feeds::Sources;
 use crate::process_ext::NoWindow;
 use crate::scanners::codex::Cache as CodexCache;
 use crate::scanners::sessions::Cache as SessionsCache;
@@ -1080,30 +1081,8 @@ pub async fn get_active_processes(
     let claude_on = claude_enabled(&app, settings_cache.inner());
     let codex_on = codex_enabled(&app, settings_cache.inner());
     let cursor_on = cursor_enabled(&app, settings_cache.inner());
-    blocking(move || {
-        let mut procs = scanners::processes::scan();
-        // Drop rows the user disabled so the live view doesn't surface a PID
-        // for a provider whose other data sources are gated off. Strip
-        // `.exe` so the match works the same way on Windows and macOS.
-        procs.retain(|p| {
-            let raw = p.name.to_lowercase();
-            let name = raw.strip_suffix(".exe").unwrap_or(&raw);
-            let is_claude = name == "claude" || name == "cline" || name.starts_with("claude ");
-            let is_codex = name == "codex" || name.starts_with("codex ");
-            let is_cursor = name == "cursor" || name.starts_with("cursor ");
-            if is_claude {
-                claude_on
-            } else if is_codex {
-                codex_on
-            } else if is_cursor {
-                cursor_on
-            } else {
-                true
-            }
-        });
-        Ok(procs)
-    })
-    .await
+    let src = Sources { claude: claude_on, codex: codex_on, cursor: cursor_on };
+    blocking(move || Ok(lunopeak_core::feeds::active_processes(src))).await
 }
 
 #[tauri::command]
@@ -1125,37 +1104,15 @@ pub async fn get_live_activity(
     let claude_on = claude_enabled(&app, settings_cache.inner());
     let codex_on = codex_enabled(&app, settings_cache.inner());
     let cursor_on = cursor_enabled(&app, settings_cache.inner());
-    if !claude_on && !codex_on && !cursor_on {
+    let src = Sources { claude: claude_on, codex: codex_on, cursor: cursor_on };
+    if !src.any() {
         return Ok(LiveActivity {
             feed: Vec::new(),
             sessions: Vec::new(),
         });
     }
     let limit = limit.unwrap_or(40);
-    blocking(move || {
-        let mut feed: Vec<crate::models::LiveEvent> = Vec::new();
-        let mut sessions: Vec<crate::models::SessionLiveState> = Vec::new();
-        if claude_on {
-            let mut a = scanners::live::collect(limit);
-            feed.append(&mut a.feed);
-            sessions.append(&mut a.sessions);
-        }
-        if codex_on {
-            let mut b = scanners::live_codex::collect(limit);
-            feed.append(&mut b.feed);
-            sessions.append(&mut b.sessions);
-        }
-        if cursor_on {
-            let mut c = scanners::live_cursor::collect(limit);
-            feed.append(&mut c.feed);
-            sessions.append(&mut c.sessions);
-        }
-        feed.sort_by_key(|e| std::cmp::Reverse(e.ts));
-        feed.truncate(limit);
-        sessions.sort_by_key(|s| std::cmp::Reverse(s.last_ts));
-        Ok(LiveActivity { feed, sessions })
-    })
-    .await
+    blocking(move || Ok(lunopeak_core::feeds::live_activity(src, limit))).await
 }
 
 /// Context-window fill for every running agent session — one row per Claude
@@ -1170,33 +1127,11 @@ pub async fn get_live_contexts(
     let claude_on = claude_enabled(&app, settings_cache.inner());
     let codex_on = codex_enabled(&app, settings_cache.inner());
     let cursor_on = cursor_enabled(&app, settings_cache.inner());
-    if !claude_on && !codex_on && !cursor_on {
+    let src = Sources { claude: claude_on, codex: codex_on, cursor: cursor_on };
+    if !src.any() {
         return Ok(Vec::new());
     }
-    blocking(move || {
-        let mut out = Vec::new();
-        if claude_on {
-            out.extend(scanners::live::contexts());
-        }
-        // Claude maps pids itself; Codex and Cursor pair against the process
-        // table, so only pay for the full scan when one of them is on.
-        if codex_on || cursor_on {
-            let procs = scanners::processes::scan();
-            if codex_on {
-                out.extend(scanners::live_codex::contexts(&procs));
-            }
-            if cursor_on {
-                out.extend(scanners::live_cursor::contexts(&procs));
-            }
-        }
-        // Busy sessions first, then freshest activity.
-        out.sort_by(|a, b| {
-            let busy = |c: &LiveContext| c.status.as_deref() == Some("busy");
-            busy(b).cmp(&busy(a)).then(b.last_ts.cmp(&a.last_ts))
-        });
-        Ok(out)
-    })
-    .await
+    blocking(move || Ok(lunopeak_core::feeds::live_contexts(src))).await
 }
 
 // ── Terminal status lines ──────────────────────────────────────────────
@@ -1855,7 +1790,7 @@ pub async fn take_snapshot(
     let repo_cache = repo_cache.inner().clone();
     blocking(move || {
         let repos = repo_index(&app, &settings_cache, &repo_cache)?;
-        scanners::snapshots::capture(&app, &repos, &name, note.as_deref())
+        crate::snapshots::capture(&app, &repos, &name, note.as_deref())
             .map_err(|e| e.to_string())
     })
     .await
@@ -1863,12 +1798,12 @@ pub async fn take_snapshot(
 
 #[tauri::command]
 pub async fn list_snapshots(app: AppHandle) -> Result<Vec<Snapshot>, String> {
-    blocking(move || scanners::snapshots::list(&app).map_err(|e| e.to_string())).await
+    blocking(move || crate::snapshots::list(&app).map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]
 pub async fn delete_snapshot(app: AppHandle, id: String) -> Result<(), String> {
-    blocking(move || scanners::snapshots::delete(&app, &id).map_err(|e| e.to_string())).await
+    blocking(move || crate::snapshots::delete(&app, &id).map_err(|e| e.to_string())).await
 }
 
 // ── GitHub pull requests ───────────────────────────────────────────────

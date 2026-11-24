@@ -73,19 +73,27 @@ src/                  # React frontend
                       # boot, format, tokens, utils, assistantTools,
                       # providers/
   types/              # frontend mirror of Rust models
-src-tauri/
+src-tauri/             # Cargo workspace root (the app package + crates/)
   src/
     lib.rs            # Tauri builder + plugin registration
     commands.rs       # invoke handlers
-    models.rs         # serde types (mirrored in src/types/api.ts)
     settings.rs       # local JSON-backed settings
-    pricing.rs        # token/cost pricing tables
+    snapshots.rs      # repo snapshots (needs the AppHandle's config dir)
     tray.rs           # tray icon menu + navigation events
-    statusline.rs     # `LunoPeak statusline` subcommand + installers
-    scanners/         # git, git_log, github, sessions, live, live_codex,
+  crates/
+    core/             # lunopeak-core: everything with no GUI dependency
+      src/
+        models.rs     # serde types (mirrored in src/types/api.ts)
+        pricing.rs    # token/cost pricing tables
+        statusline.rs # `LunoPeak statusline` subcommand + installers
+        feeds.rs      # merged live activity / contexts / processes
+        node_wire.rs  # the file format lunopeak-node writes for a hub
+        logger.rs     # diagnostics log + `elog!`
+        scanners/     # git, git_log, github, sessions, live, live_codex,
                       # live_cursor, ports, processes, health, install,
-                      # snapshots, usage, audit, status, config, codex,
-                      # codex_web, cursor_web
+                      # usage, audit, status, config, codex, codex_web,
+                      # cursor_web
+    node/             # lunopeak-node: headless publisher for remote machines
   tauri.conf.json
   capabilities/default.json
 release-notes/        # per-version notes consumed by the updater
@@ -116,7 +124,7 @@ That token is **read, never refreshed**: refresh tokens rotate, and spending one
 
 ## Cost model
 
-`src-tauri/src/pricing.rs` holds the per-model rate tables; `cost_of(model, usage, ts_millis)` prices a single assistant turn. Two wrinkles:
+`src-tauri/crates/core/src/pricing.rs` holds the per-model rate tables; `cost_of(model, usage, ts_millis)` prices a single assistant turn. Two wrinkles:
 
 - **Haiku 5.5 is priced by prompt length** — the first Claude model where the rate depends on request size. Past `HAIKU_5_5_LONG_THRESHOLD` (100K) the whole turn bills at the long-prompt tier, and "prompt length" is the entire input side: fresh input + cache reads + cache writes.
 - **Cache writes split by TTL.** `usage.cache_creation` is the 5m+1h total, so the 1h portion is subtracted out and each half bills at its own rate.
@@ -125,7 +133,7 @@ That token is **read, never refreshed**: refresh tokens rotate, and spending one
 
 ## Terminal status line
 
-`src-tauri/src/statusline.rs` backs both halves of `Settings → Terminal`.
+`src-tauri/crates/core/src/statusline.rs` backs both halves of `Settings → Terminal`.
 
 **Claude Code** runs a user-configured command on every repaint and pipes it the session as JSON on stdin. The app binary doubles as that command — `main.rs` intercepts `argv[1] == "statusline"` before the Tauri runtime starts and exits through `statusline_cli`, so the same executable serves the GUI and the status line. One line comes back: context fill, the plan's 5h / weekly windows, per-model weekly caps, and cost. Everything is read from stdin or from files the app already keeps on disk, so a repaint never hits the network.
 
@@ -141,7 +149,7 @@ The Assistant talks to five providers, one module each under `src/lib/providers/
 
 ## Open in editor
 
-Skills, Agents, Memory, Hooks, Live processes, and Repo Detail all surface a one-click "Open" affordance. The catalog of editors lives in `src-tauri/src/scanners/processes.rs` (the canonical `EditorSpec` list) and is mirrored in `src/lib/editors.ts`. Each spec carries a CLI command list, an optional macOS `.app` bundle name, and a platform mask; the Rust side launches in this order:
+Skills, Agents, Memory, Hooks, Live processes, and Repo Detail all surface a one-click "Open" affordance. The catalog of editors lives in `src-tauri/crates/core/src/scanners/processes.rs` (the canonical `EditorSpec` list) and is mirrored in `src/lib/editors.ts`. Each spec carries a CLI command list, an optional macOS `.app` bundle name, and a platform mask; the Rust side launches in this order:
 
 1. Try each CLI command on PATH. On Windows we also try `<cli>.cmd`, `<cli>.exe`, and `<cli>.bat` because `Command::new` doesn't honor `PATHEXT`.
 2. On macOS, fall back to `open -a "<App Name>"` so installs without a CLI shim still launch.
@@ -157,7 +165,7 @@ When the user has no `editor.defaultEditor` set, the first click on any "Open" b
 
 ## Tauri ↔ React contract
 
-Frontend talks to Rust via `src/lib/tauri.ts`'s typed `api` object, with TanStack Query keys centralized in `src/lib/queries.ts`. The serde models in `src-tauri/src/models.rs` use `#[serde(rename_all = "camelCase")]` so the TS types in `src/types/api.ts` mirror them 1:1.
+Frontend talks to Rust via `src/lib/tauri.ts`'s typed `api` object, with TanStack Query keys centralized in `src/lib/queries.ts`. The serde models in `src-tauri/crates/core/src/models.rs` use `#[serde(rename_all = "camelCase")]` so the TS types in `src/types/api.ts` mirror them 1:1.
 
 When running outside the Tauri runtime (e.g. `npm run dev` in a browser tab), `api.*` returns the fallbacks defined inline so the UI still mounts. New IPC commands must also be allowed in `src-tauri/capabilities/default.json` or they fail at runtime.
 

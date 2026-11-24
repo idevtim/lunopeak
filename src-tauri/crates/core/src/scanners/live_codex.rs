@@ -135,6 +135,7 @@ fn parse_recent(
     sessions.insert(
         sid.clone(),
         SessionLiveState {
+            host: None,
             session_id: sid,
             cwd,
             last_ts,
@@ -204,6 +205,7 @@ pub fn contexts(procs: &[ActiveProcess]) -> Vec<LiveContext> {
         .zip(claimed)
         .filter(|((mtime, _), pid)| pid.is_some() || *mtime >= live_cutoff)
         .map(|((_, r), pid)| LiveContext {
+            host: None,
             agent: "codex".to_string(),
             name: names.get(&r.id).cloned(),
             session_id: r.id,
@@ -407,6 +409,7 @@ fn push_event(
     }
     let sid = session_id.unwrap_or("").to_string();
     events.push(LiveEvent {
+        host: None,
         ts,
         session_id: sid,
         cwd: cwd.map(str::to_string),

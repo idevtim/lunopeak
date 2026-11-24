@@ -1,0 +1,49 @@
+[package]
+name = "lunopeak-core"
+# The app's release version lives in src-tauri/Cargo.toml; build.rs exports it
+# as `LUNOPEAK_VERSION`. This crate is never published on its own.
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.90"
+publish = false
+build = "build.rs"
+
+[lib]
+name = "lunopeak_core"
+
+[dev-dependencies]
+tempfile = "3"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+anyhow = "1"
+walkdir = "2"
+sysinfo = "0.32"
+rayon = "1"
+dirs = "5"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+
+# Edits ~/.codex/config.toml in place (status line opt-in) without
+# discarding the user's comments, ordering or formatting.
+toml_edit = "0.25"
+
+# Cursor stores chat history in a SQLite database (state.vscdb). `bundled`
+# links libsqlite3 statically so we don't depend on the host's version.
+# Pinned to 0.31 to match the version `rookie` bundles — cargo only allows
+# one crate in the graph to claim `links = "sqlite3"`, so both must agree.
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Browser-cookie extraction for the Cursor web API path (cursor.com doesn't
+# publish a CLI/API key flow; we ride the user's existing browser session).
+# Reads from Chrome / Edge / Brave / Arc / Firefox / Safari / etc., decrypting
+# Chromium cookies via the OS keychain — this triggers a one-time Keychain
+# prompt on macOS the first time the user enables the Cursor web source.
+rookie = "0.5"
+
+# Codex 0.163+ zstd-compresses its rollouts (`rollout-*.jsonl.zst`). A pure-
+# Rust decoder keeps the Windows cross-compile and the Linux container build
+# free of a C toolchain for libzstd.
+ruzstd = "0.8"

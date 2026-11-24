@@ -523,6 +523,11 @@ pub type BranchSpend = std::collections::BTreeMap<String, std::collections::BTre
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
+    /// Machine this row came from: `None` for this machine, else the
+    /// reporting node's host name. Stamped when a node's snapshot is written
+    /// or read, never by the scanners themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub id: String,
     pub project_path: Option<String>,
     pub project_name: Option<String>,
@@ -758,6 +763,11 @@ pub struct TranscriptMatch {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveEvent {
+    /// Machine this row came from: `None` for this machine, else the
+    /// reporting node's host name. Stamped when a node's snapshot is written
+    /// or read, never by the scanners themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub ts: i64,
     pub session_id: String,
     pub cwd: Option<String>,
@@ -785,6 +795,11 @@ pub struct LiveTodo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionLiveState {
+    /// Machine this row came from: `None` for this machine, else the
+    /// reporting node's host name. Stamped when a node's snapshot is written
+    /// or read, never by the scanners themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub session_id: String,
     pub cwd: Option<String>,
     pub last_ts: i64,
@@ -818,7 +833,7 @@ pub struct LiveSubagent {
     pub last_summary: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveActivity {
     pub feed: Vec<LiveEvent>,
@@ -832,6 +847,11 @@ pub struct LiveActivity {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveContext {
+    /// Machine this row came from: `None` for this machine, else the
+    /// reporting node's host name. Stamped when a node's snapshot is written
+    /// or read, never by the scanners themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     /// "claude" | "codex" | "cursor"
     pub agent: String,
     pub session_id: String,
@@ -897,6 +917,11 @@ pub struct CodexStatusline {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActiveProcess {
+    /// Machine this row came from: `None` for this machine, else the
+    /// reporting node's host name. Stamped when a node's snapshot is written
+    /// or read, never by the scanners themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub pid: u32,
     pub name: String,
     pub cwd: Option<String>,

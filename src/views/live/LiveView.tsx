@@ -83,10 +83,11 @@ export function LiveView() {
   const sessionsByCwdAgent = useMemo(() => {
     const map = new Map<string, SessionLiveState[]>();
     // Scanner sorts sessions by lastTs desc, so each bucket is freshest-first.
-    // Key by cwd + agent so codex processes don't pull from claude sessions
-    // when both agents are running in the same folder.
+    // Key by host + cwd + agent so codex processes don't pull from claude
+    // sessions when both agents run in the same folder, and a remote node's
+    // sessions never pair with a local process at the same path.
     for (const s of sessions) {
-      const key = sessionBucketKey(s.cwd, s.agent);
+      const key = sessionBucketKey(s.host, s.cwd, s.agent);
       if (!key) continue;
       const arr = map.get(key);
       if (arr) arr.push(s);
@@ -121,17 +122,19 @@ export function LiveView() {
   // Claude). Several Cursor chats share one pid — the list arrives freshest
   // first, so the first row per pid wins.
   const contextList = contexts.data ?? [];
-  const contextByPid = new Map<number, LiveContext>();
+  const contextByPid = new Map<string, LiveContext>();
   for (const c of contextList) {
-    if (c.pid != null && !contextByPid.has(c.pid)) contextByPid.set(c.pid, c);
+    if (c.pid == null) continue;
+    const k = pidKey(c.host, c.pid);
+    if (!contextByPid.has(k)) contextByPid.set(k, c);
   }
   const contextFor = (p: ActiveProcess): LiveContext | undefined => {
-    const byPid = contextByPid.get(p.pid);
+    const byPid = contextByPid.get(pidKey(p.host, p.pid));
     if (byPid) return byPid;
     const agent = agentOfProcess(p.name);
-    const key = agent ? sessionBucketKey(p.cwd, agent) : null;
+    const key = agent ? sessionBucketKey(p.host, p.cwd, agent) : null;
     return key
-      ? contextList.find((c) => c.pid == null && sessionBucketKey(c.cwd, c.agent) === key)
+      ? contextList.find((c) => c.pid == null && sessionBucketKey(c.host, c.cwd, c.agent) === key)
       : undefined;
   };
 
@@ -140,31 +143,31 @@ export function LiveView() {
   // process gets the freshest session) so co-located instances display
   // distinct activity. Pair only same-agent sessions — a codex process must
   // not display a claude session's last action just because they share a cwd.
-  const sessionByPid = new Map<number, SessionLiveState>();
+  const sessionByPid = new Map<string, SessionLiveState>();
   const claimed = new Set<string>();
   for (const p of sorted) {
-    const ctx = contextByPid.get(p.pid);
+    const ctx = contextByPid.get(pidKey(p.host, p.pid));
     if (!ctx || ctx.agent === "cursor") continue;
-    const exact = sessions.find((s) => s.sessionId === ctx.sessionId);
+    const exact = sessions.find((s) => s.sessionId === ctx.sessionId && (s.host ?? null) === (ctx.host ?? null));
     if (exact) {
-      sessionByPid.set(p.pid, exact);
+      sessionByPid.set(pidKey(p.host, p.pid), exact);
       claimed.add(exact.sessionId);
     }
   }
   for (const p of sorted) {
-    if (sessionByPid.has(p.pid)) continue;
+    if (sessionByPid.has(pidKey(p.host, p.pid))) continue;
     const agent = agentOfProcess(p.name);
     if (!agent) continue;
-    const key = sessionBucketKey(p.cwd, agent);
+    const key = sessionBucketKey(p.host, p.cwd, agent);
     if (!key) continue;
     const next = sessionsByCwdAgent.get(key)?.find((s) => !claimed.has(s.sessionId));
     if (!next) continue;
-    sessionByPid.set(p.pid, next);
+    sessionByPid.set(pidKey(p.host, p.pid), next);
     claimed.add(next.sessionId);
   }
 
   const rows = sorted.map((p) => {
-    const session = sessionByPid.get(p.pid);
+    const session = sessionByPid.get(pidKey(p.host, p.pid));
     const context = contextFor(p);
     const subagentsRunning = Math.max(
       context?.subagentsRunning ?? 0,
@@ -703,14 +706,21 @@ function cwdKey(path: string | null | undefined): string | null {
   return trimmed.toLowerCase();
 }
 
-/// Bucket key combining cwd + agent so claude and codex sessions in the same
-/// folder live in separate pools.
+/// Bucket key combining host + cwd + agent so claude and codex sessions in
+/// the same folder live in separate pools, and so do two machines' sessions
+/// in the same path. `host` is absent for this machine.
 function sessionBucketKey(
+  host: string | null | undefined,
   path: string | null | undefined,
   agent: LiveAgent,
 ): string | null {
   const c = cwdKey(path);
-  return c ? `${agent}::${c}` : null;
+  return c ? `${host ?? ""}::${agent}::${c}` : null;
+}
+
+/// Pids are only unique per machine.
+function pidKey(host: string | null | undefined, pid: number): string {
+  return `${host ?? ""}::${pid}`;
 }
 
 /// Map a process's reported name to its agent type. Returns null for agents

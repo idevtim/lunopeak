@@ -61,7 +61,7 @@ type Stamp = (SystemTime, usize);
 /// Bumped with the app version, so any release that changes what
 /// `parse_session_file` extracts re-parses once instead of serving stale
 /// sessions. Bump the suffix for parser changes made between releases.
-const DISK_CACHE_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "/3");
+const DISK_CACHE_VERSION: &str = concat!(env!("LUNOPEAK_VERSION"), "/3");
 
 /// On-disk row: `Session::cost_by_day` and `Session::cost_by_branch` are
 /// `#[serde(skip)]` (kept off IPC), so they travel alongside the session
@@ -326,6 +326,7 @@ fn parse_session_file(path: &Path, subagents: &[PathBuf]) -> Option<Session> {
         session_id.or_else(|| path.file_stem().map(|s| s.to_string_lossy().to_string()))?;
 
     Some(Session {
+        host: None,
         id: session_id,
         project_name: cwd.as_deref().and_then(|p| {
             Path::new(p)
@@ -380,7 +381,7 @@ fn add_usage(total: &mut TokenUsage, turn: &TokenUsage) {
 /// (next to an `agent-<id>.meta.json`, read by `subagent_run` and the live scanner); the parent transcript
 /// only records the subagent's final result, never its tokens. Sorted for a
 /// stable cache stamp.
-pub(crate) fn subagent_files(session_file: &Path) -> Vec<PathBuf> {
+pub fn subagent_files(session_file: &Path) -> Vec<PathBuf> {
     let Some(stem) = session_file.file_stem() else {
         return Vec::new();
     };
@@ -1865,6 +1866,7 @@ mod tests {
         cost_by_day.insert(today, 50.0);
 
         let session = Session {
+            host: None,
             id: "s1".into(),
             project_path: None,
             project_name: None,
