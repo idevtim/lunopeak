@@ -3044,7 +3044,6 @@ dependencies = [
  "lunopeak-core",
  "serde",
  "serde_json",
- "sysinfo",
 ]
 
 [[package]]

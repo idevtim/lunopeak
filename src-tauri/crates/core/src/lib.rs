@@ -7,6 +7,7 @@
 #[macro_use]
 pub mod logger;
 pub mod feeds;
+pub mod hub;
 pub mod models;
 pub mod node_wire;
 pub mod pricing;

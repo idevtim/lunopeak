@@ -113,6 +113,24 @@ export const queries = {
     queryFn: api.getLiveContexts,
     staleTime: 1500,
   },
+  // Other machines. Polled like their local counterparts; cheap when the
+  // shared folder hasn't changed (the Rust side caches by mtime).
+  remoteNodes: {
+    queryKey: ["remote-nodes"] as const,
+    queryFn: api.getRemoteNodes,
+    staleTime: 5 * 1000,
+  },
+  remoteLive: {
+    queryKey: ["remote-live"] as const,
+    queryFn: api.getRemoteLive,
+    staleTime: 1500,
+  },
+  remoteSessions: {
+    queryKey: ["remote-sessions"] as const,
+    queryFn: api.getRemoteSessions,
+    staleTime: 60 * 1000,
+    refetchInterval: 60 * 1000,
+  },
   terminalIntegrations: {
     queryKey: ["terminal-integrations"] as const,
     queryFn: api.getTerminalIntegrations,

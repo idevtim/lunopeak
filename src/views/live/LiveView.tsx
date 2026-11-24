@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Bot, Check, Code2, Folder, MessageCircle, Sparkles, Square, X } from "lucide-react";
+import { Activity, Bot, Check, Code2, Folder, MessageCircle, Monitor, Sparkles, Square, X } from "lucide-react";
 import { queries } from "@/lib/queries";
 import { api } from "@/lib/tauri";
 import { useDelayedLoading } from "@/hooks/useDelayedLoading";
@@ -71,6 +71,13 @@ export function LiveView() {
     ...queries.liveContexts,
     refetchInterval: 3000,
   });
+  // Other machines' agents (lunopeak-node). Read-only rows: no stop, reveal
+  // or open, and no memory-flat idle guess (their memory only updates on the
+  // node's heartbeat). Empty unless Settings → Other machines is on.
+  const remote = useQuery({
+    ...queries.remoteLive,
+    refetchInterval: 3000,
+  });
 
   const ingest = useProcessSamplesStore((s) => s.ingest);
   const samples = useProcessSamplesStore((s) => s.byPid);
@@ -79,7 +86,10 @@ export function LiveView() {
     if (procs.data) ingest(procs.data);
   }, [procs.data, ingest]);
 
-  const sessions = live.data?.sessions ?? [];
+  const sessions = useMemo(
+    () => [...(live.data?.sessions ?? []), ...(remote.data?.activity.sessions ?? [])],
+    [live.data, remote.data],
+  );
   const sessionsByCwdAgent = useMemo(() => {
     const map = new Map<string, SessionLiveState[]>();
     // Scanner sorts sessions by lastTs desc, so each bucket is freshest-first.
@@ -113,15 +123,17 @@ export function LiveView() {
     );
   }
 
-  const list = procs.data ?? [];
-  const feed = live.data?.feed ?? [];
+  const list = [...(procs.data ?? []), ...(remote.data?.processes ?? [])];
+  const feed = [...(live.data?.feed ?? []), ...(remote.data?.activity.feed ?? [])]
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, 40);
   const now = Date.now();
   const sorted = [...list].sort((a, b) => b.runtimeSec - a.runtimeSec);
 
   // Context rows carry the pid when the agent lets us map it (always for
   // Claude). Several Cursor chats share one pid — the list arrives freshest
   // first, so the first row per pid wins.
-  const contextList = contexts.data ?? [];
+  const contextList = [...(contexts.data ?? []), ...(remote.data?.contexts ?? [])];
   const contextByPid = new Map<string, LiveContext>();
   for (const c of contextList) {
     if (c.pid == null) continue;
@@ -174,7 +186,7 @@ export function LiveView() {
       session?.subagents.filter((a) => a.status === "running").length ?? 0,
     );
     // Memory can sit flat while background subagents do the work.
-    const stale = isStale(samples[p.pid]) && subagentsRunning === 0;
+    const stale = !p.host && isStale(samples[p.pid]) && subagentsRunning === 0;
     const state: SessionState = stale
       ? "idle"
       : sessionState({
@@ -230,9 +242,9 @@ export function LiveView() {
             <>
               {active.map((r) => (
                 <SessionCard
-                  key={r.proc.pid}
+                  key={pidKey(r.proc.host, r.proc.pid)}
                   proc={r.proc}
-                  samples={samples[r.proc.pid]}
+                  samples={r.proc.host ? undefined : samples[r.proc.pid]}
                   session={r.session}
                   context={r.context}
                   state={r.state}
@@ -275,7 +287,12 @@ function SessionCard({ proc, samples, session, context, state, now }: SessionCar
   const title = sessionTitle(proc, context);
   const folder = basename(proc.cwd);
   const model = shortModel(context?.model ?? null);
-  const subline = [folder !== title ? folder : null, model, `running ${runningFor(proc.runtimeSec)}`]
+  const subline = [
+    proc.host,
+    folder !== title ? folder : null,
+    model,
+    `running ${runningFor(proc.runtimeSec)}`,
+  ]
     .filter(Boolean)
     .join(" · ");
   const memMb = Math.round(proc.memoryKb / 1024);
@@ -308,6 +325,12 @@ function SessionCard({ proc, samples, session, context, state, now }: SessionCar
           </span>
           <span className="truncate text-xs text-zinc-500 dark:text-zinc-400">{subline}</span>
         </div>
+        {proc.host && (
+          <Pill className="shrink-0" title={`Running on ${proc.host}`}>
+            <Monitor size={11} strokeWidth={2} />
+            {proc.host}
+          </Pill>
+        )}
         <span
           className="hidden shrink-0 items-center gap-1.5 text-[11.5px] tabular-nums text-zinc-500 sm:flex dark:text-zinc-400"
           title={`Memory use over the last ${samples?.samples.length ?? 0} samples · PID ${proc.pid}`}
@@ -381,12 +404,16 @@ function SessionCard({ proc, samples, session, context, state, now }: SessionCar
 
       <div className="flex flex-wrap items-center gap-3 border-t border-black/[0.05] pt-2.5 dark:border-white/[0.06]">
         <ChatMemory context={context} />
-        <SessionActions
-          proc={proc}
-          fmName={fmName}
-          onOpenInEditor={proc.cwd ? () => openInEditor(proc.cwd!) : undefined}
-          onReveal={onReveal}
-        />
+        {proc.host ? (
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">On {proc.host}</span>
+        ) : (
+          <SessionActions
+            proc={proc}
+            fmName={fmName}
+            onOpenInEditor={proc.cwd ? () => openInEditor(proc.cwd!) : undefined}
+            onReveal={onReveal}
+          />
+        )}
       </div>
     </Card>
   );

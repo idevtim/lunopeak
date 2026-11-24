@@ -306,6 +306,20 @@ pub struct Settings {
     /// settings.json by the `statusline` CLI on every repaint.
     #[serde(default)]
     pub statusline: StatuslinePrefs,
+    /// Other machines' sessions, published by `lunopeak-node`.
+    #[serde(default)]
+    pub remote: RemoteHubPrefs,
+}
+
+/// Where to find the snapshots `lunopeak-node` writes on other machines.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteHubPrefs {
+    pub enabled: bool,
+    /// The folder passed to the nodes as `--out` (synced to this machine by
+    /// Syncthing, iCloud, a network share…). Its `nodes/` subfolder is read.
+    #[serde(default)]
+    pub folder: Option<String>,
 }
 
 fn default_ollama_endpoint() -> String {
@@ -344,6 +358,7 @@ impl Default for Settings {
             tray: TrayPrefs::default(),
             editor: EditorPrefs::default(),
             statusline: StatuslinePrefs::default(),
+            remote: RemoteHubPrefs::default(),
         }
     }
 }

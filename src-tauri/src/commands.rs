@@ -8,6 +8,7 @@ use crate::models::{
     UsageLimits, WorktreeEntry, RepoInsights, PrInsights,
 };
 use lunopeak_core::feeds::Sources;
+use lunopeak_core::hub::{Hub, RemoteLive, RemoteNode};
 use crate::process_ext::NoWindow;
 use crate::scanners::codex::Cache as CodexCache;
 use crate::scanners::sessions::Cache as SessionsCache;
@@ -1132,6 +1133,76 @@ pub async fn get_live_contexts(
         return Ok(Vec::new());
     }
     blocking(move || Ok(lunopeak_core::feeds::live_contexts(src))).await
+}
+
+// ── Other machines (lunopeak-node) ──────────────────────────────────────
+//
+// Kept apart from the local commands on purpose: Ports, Repos, Worktrees and
+// the dashboard join processes and sessions on cwd or pid alone, so remote
+// rows only reach the views that call these and know about `host`. The tray,
+// status line and budget alerts stay this-machine only.
+
+/// The shared folder to read and this machine's host (skipped), or `None`
+/// when reading other machines is off.
+fn remote_root(app: &AppHandle, cache: &SettingsCache) -> Option<(std::path::PathBuf, Option<String>)> {
+    let s = cache.load(app).ok()?;
+    let folder = s.remote.folder.filter(|f| s.remote.enabled && !f.trim().is_empty())?;
+    Some((std::path::PathBuf::from(folder), lunopeak_core::node_wire::local_host()))
+}
+
+#[tauri::command]
+pub async fn get_remote_nodes(
+    app: AppHandle,
+    hub: State<'_, Hub>,
+    settings_cache: State<'_, SettingsCache>,
+) -> Result<Vec<RemoteNode>, String> {
+    let Some((root, me)) = remote_root(&app, settings_cache.inner()) else {
+        return Ok(Vec::new());
+    };
+    let hub = hub.inner().clone();
+    blocking(move || Ok(hub.nodes(&root, me.as_deref()))).await
+}
+
+#[tauri::command]
+pub async fn get_remote_live(
+    app: AppHandle,
+    hub: State<'_, Hub>,
+    settings_cache: State<'_, SettingsCache>,
+) -> Result<RemoteLive, String> {
+    let Some((root, me)) = remote_root(&app, settings_cache.inner()) else {
+        return Ok(RemoteLive::default());
+    };
+    let hub = hub.inner().clone();
+    blocking(move || Ok(hub.live(&root, me.as_deref()))).await
+}
+
+/// Claude sessions from other machines, minus any id this machine also has.
+#[tauri::command]
+pub async fn get_remote_sessions(
+    app: AppHandle,
+    hub: State<'_, Hub>,
+    cache: State<'_, SessionsCache>,
+    settings_cache: State<'_, SettingsCache>,
+) -> Result<Vec<Session>, String> {
+    let Some((root, me)) = remote_root(&app, settings_cache.inner()) else {
+        return Ok(Vec::new());
+    };
+    let claude_on = claude_enabled(&app, settings_cache.inner());
+    let hub = hub.inner().clone();
+    let cache = cache.inner().clone();
+    blocking(move || {
+        let local: std::collections::HashSet<String> = if claude_on {
+            scanners::sessions::scan_all(&cache)
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(|s| s.id)
+                .collect()
+        } else {
+            Default::default()
+        };
+        Ok(hub.sessions(&root, me.as_deref(), "claude", &local))
+    })
+    .await
 }
 
 // ── Terminal status lines ──────────────────────────────────────────────

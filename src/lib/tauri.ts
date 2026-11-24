@@ -22,6 +22,8 @@ import type {
   ListeningPort,
   LiveActivity,
   LiveContext,
+  RemoteLive,
+  RemoteNode,
   TerminalIntegrations,
   StatuslinePrefs,
   StatuslineSpan,
@@ -165,6 +167,16 @@ export const api = {
     call<LiveActivity>("get_live_activity", { limit: limit ?? null }, demo.liveActivity),
   getLiveContexts: () =>
     call<LiveContext[]>("get_live_contexts", undefined, demo.liveContexts),
+
+  // Other machines (lunopeak-node). Empty in browser mode.
+  getRemoteNodes: () => call<RemoteNode[]>("get_remote_nodes", undefined, []),
+  getRemoteLive: () =>
+    call<RemoteLive>("get_remote_live", undefined, {
+      activity: { feed: [], sessions: [] },
+      contexts: [],
+      processes: [],
+    }),
+  getRemoteSessions: () => call<Session[]>("get_remote_sessions", undefined, []),
 
   // Terminal status lines
   getTerminalIntegrations: () =>

@@ -1463,6 +1463,7 @@ export const settingsFixture: Settings = {
   },
   editor: { defaultEditor: "vscode" },
   statusline: defaultStatuslinePrefs,
+  remote: { enabled: false, folder: null },
 };
 
 export const repoDetail = (path: string): RepoDetail | null => {

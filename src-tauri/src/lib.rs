@@ -105,6 +105,7 @@ pub fn run() {
         .manage(SettingsCache::default())
         .manage(SessionsCache::new())
         .manage(CodexCache::new())
+        .manage(lunopeak_core::hub::Hub::new())
         .manage(GithubCache::default())
         .manage(InsightsPrCache::default())
         .setup(move |app| {
@@ -280,6 +281,9 @@ pub fn run() {
             commands::reveal_in_finder,
             commands::get_live_activity,
             commands::get_live_contexts,
+            commands::get_remote_nodes,
+            commands::get_remote_live,
+            commands::get_remote_sessions,
             commands::get_terminal_integrations,
             commands::preview_statusline,
             commands::set_claude_statusline,

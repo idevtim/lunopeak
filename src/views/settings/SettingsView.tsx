@@ -52,6 +52,7 @@ import { Button } from "@/components/ui/Button";
 import { Switch } from "@/components/ui/Switch";
 import { ProviderIcon } from "@/components/ui/ProviderIcon";
 import { cn, openExternal } from "@/lib/utils";
+import { formatRelativeTime } from "@/lib/format";
 import { filterEditorsForPlatform } from "@/lib/editors";
 import { checkForUpdates, RELEASES_URL } from "@/lib/updates";
 import { toast } from "@/stores/toastStore";
@@ -195,6 +196,11 @@ export function SettingsView() {
     onSettled: (_data, _err, next, ctx) => {
       qc.invalidateQueries({ queryKey: queries.settings.queryKey });
       qc.invalidateQueries({ queryKey: queries.repos.queryKey });
+      // Cheap to refetch (cached by mtime on the Rust side), and the folder
+      // or the on/off switch may have changed.
+      for (const q of [queries.remoteNodes, queries.remoteLive, queries.remoteSessions]) {
+        qc.invalidateQueries({ queryKey: q.queryKey });
+      }
 
       const prevAgents = ctx?.prev?.agents;
       const nextAgents = next.agents;
@@ -709,7 +715,105 @@ function AgentsCategory({ s, update, platform }: { s: Settings; update: Update; 
           <Button onClick={() => void addFolder()}>Add folder…</Button>
         </SettingBlock>
       </SettingsSection>
+
+      <OtherMachines s={s} update={update} />
     </>
+  );
+}
+
+/** Reading sessions that `lunopeak-node` publishes from other machines. */
+function OtherMachines({ s, update }: { s: Settings; update: Update }) {
+  const r = s.remote;
+  const nodes = useQuery({
+    ...queries.remoteNodes,
+    enabled: r.enabled && !!r.folder,
+    refetchInterval: 10_000,
+  });
+  const setRemote = (patch: Partial<Settings["remote"]>) =>
+    update((cur) => ({ ...cur, remote: { ...cur.remote, ...patch } }));
+
+  const chooseFolder = async () => {
+    if (!isTauri()) {
+      toast.info("Choosing a folder needs the desktop app");
+      return;
+    }
+    const selected = await open({ directory: true, multiple: false });
+    if (typeof selected === "string") setRemote({ folder: selected, enabled: true });
+  };
+
+  const list = nodes.data ?? [];
+  return (
+    <SettingsSection
+      title="Other machines"
+      caption="Show sessions from computers running lunopeak-node. They write to a folder you sync here with Syncthing, iCloud Drive or a network share."
+    >
+      <SettingRow
+        label="Show other machines"
+        hint="Adds their running agents to Live and their history to Sessions. Costs, the menu bar and alerts stay this machine only."
+        keywords="remote machines node sync other computers hosts"
+        control={
+          <Switch
+            checked={r.enabled}
+            onChange={(v) => setRemote({ enabled: v })}
+            ariaLabel="Show other machines"
+          />
+        }
+      />
+      <SettingRow
+        label="Shared folder"
+        hint={
+          r.folder ? (
+            <span className="font-mono text-[11.5px]">{r.folder}</span>
+          ) : (
+            "The folder each node writes to with --out."
+          )
+        }
+        keywords="remote shared folder sync node out"
+        dimmed={!r.enabled}
+        control={
+          <Button onClick={() => void chooseFolder()}>
+            {r.folder ? "Change…" : "Choose…"}
+          </Button>
+        }
+      />
+      {r.enabled && r.folder && (
+        <SettingBlock keywords="remote machines node hosts online" className="py-2.5">
+          {nodes.isLoading ? (
+            <Bone className="h-4 w-48" />
+          ) : list.length === 0 ? (
+            <p className="m-0 text-[13px] text-zinc-500 dark:text-zinc-400">
+              No machines here yet. On another computer, run{" "}
+              <code className="font-mono text-[12px]">lunopeak-node --out &lt;this folder&gt;</code>.
+            </p>
+          ) : (
+            <ul className="m-0 flex list-none flex-col gap-2 p-0">
+              {list.map((n) => (
+                <li key={n.host} className="flex flex-col gap-0.5">
+                  <span className="flex items-center gap-2 text-[13px] text-zinc-900 dark:text-zinc-100">
+                    <span className="font-mono">{n.host}</span>
+                    {n.online ? <Pill tone="green">Online</Pill> : <Pill>Offline</Pill>}
+                    {n.includesPrompts && <Pill tone="amber">Shares prompts</Pill>}
+                  </span>
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {[
+                      n.os,
+                      n.nodeVersion && `node ${n.nodeVersion}`,
+                      `${n.sessions.toLocaleString()} sessions`,
+                      n.lastSeen != null && `seen ${formatRelativeTime(n.lastSeen)}`,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                  {n.problem && (
+                    <span className="text-xs text-rose-600 dark:text-rose-400">{n.problem}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </SettingBlock>
+      )}
+    </SettingsSection>
   );
 }
 

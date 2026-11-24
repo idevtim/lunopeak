@@ -67,6 +67,10 @@ pub struct SessionsData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteSession {
+    /// "claude" | "codex". `Session` itself doesn't say, and the hub's
+    /// Sessions view lists Claude sessions only, as the local one does.
+    #[serde(default = "default_agent")]
+    pub agent: String,
     #[serde(flatten)]
     pub session: Session,
     #[serde(default)]
@@ -76,10 +80,11 @@ pub struct RemoteSession {
 }
 
 impl RemoteSession {
-    pub fn new(session: Session) -> Self {
+    pub fn new(agent: &str, session: Session) -> Self {
         let cost_by_day = session.cost_by_day.clone();
         let cost_by_branch = session.cost_by_branch.clone();
         RemoteSession {
+            agent: agent.to_string(),
             session,
             cost_by_day,
             cost_by_branch,
@@ -93,6 +98,18 @@ impl RemoteSession {
         s.cost_by_branch = self.cost_by_branch;
         s
     }
+}
+
+fn default_agent() -> String {
+    "claude".to_string()
+}
+
+/// This machine's name as a node would publish it: the first label of the
+/// OS host name ("tims-mbp.localdomain" -> "tims-mbp"), sanitized. The hub
+/// uses the same function to skip its own folder.
+pub fn local_host() -> Option<String> {
+    let full = sysinfo::System::host_name()?;
+    sanitize_host(full.split('.').next().unwrap_or(&full))
 }
 
 /// A host name safe to use as a folder name and a UI label: lowercase ASCII
@@ -242,7 +259,7 @@ mod tests {
 
     #[test]
     fn remote_session_round_trips_skipped_spend() {
-        let wire = serde_json::to_string(&RemoteSession::new(session())).unwrap();
+        let wire = serde_json::to_string(&RemoteSession::new("claude", session())).unwrap();
         let back: RemoteSession = serde_json::from_str(&wire).unwrap();
         let s = back.into_session();
         assert_eq!(s.cost_by_day.values().sum::<f64>(), 1.5);

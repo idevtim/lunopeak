@@ -149,30 +149,30 @@ fn collect_sessions(
     cache: &scanners::sessions::Cache,
     codex_cache: &scanners::codex::Cache,
 ) -> SessionsData {
-    let mut all: Vec<Session> = Vec::new();
+    let mut all: Vec<(&str, Session)> = Vec::new();
     if src.claude {
         match scanners::sessions::scan_all(cache) {
-            Ok(s) => all.extend(s),
+            Ok(s) => all.extend(s.into_iter().map(|s| ("claude", s))),
             Err(e) => lunopeak_core::elog!(error, "node", "claude session scan failed: {e:#}"),
         }
     }
     if src.codex {
         match scanners::codex::scan_all(codex_cache) {
-            Ok(s) => all.extend(s),
+            Ok(s) => all.extend(s.into_iter().map(|s| ("codex", s))),
             Err(e) => lunopeak_core::elog!(error, "node", "codex session scan failed: {e:#}"),
         }
     }
     // Newest first, ties broken by id, so an unchanged history serializes to
     // the same bytes and isn't rewritten.
-    all.sort_by(|a, b| b.end_ts.cmp(&a.end_ts).then_with(|| a.id.cmp(&b.id)));
+    all.sort_by(|(_, a), (_, b)| b.end_ts.cmp(&a.end_ts).then_with(|| a.id.cmp(&b.id)));
     let sessions = all
         .into_iter()
-        .map(|mut s| {
+        .map(|(agent, mut s)| {
             if !args.share_prompts {
                 node_wire::redact_session(&mut s);
             }
             s.host = Some(args.host.clone());
-            RemoteSession::new(s)
+            RemoteSession::new(agent, s)
         })
         .collect();
     SessionsData { sessions }
@@ -306,17 +306,13 @@ fn parse_args(raw: Vec<String>) -> Result<Option<Args>, String> {
     }
 
     let out = out.ok_or("--out <DIR> is required")?;
-    let raw_host = match host {
-        Some(h) => h,
-        // "box.example.com" / "tims-mbp.localdomain" -> just the machine part.
+    let host = match host {
+        Some(h) => node_wire::sanitize_host(&h)
+            .ok_or_else(|| format!("host name {h:?} has no usable characters"))?,
         None => {
-            let full =
-                sysinfo::System::host_name().ok_or("couldn't read the host name; pass --host")?;
-            full.split('.').next().unwrap_or(&full).to_string()
+            node_wire::local_host().ok_or("couldn't read this machine's host name; pass --host")?
         }
     };
-    let host = node_wire::sanitize_host(&raw_host)
-        .ok_or_else(|| format!("host name {raw_host:?} has no usable characters; pass --host"))?;
     Ok(Some(Args {
         out,
         host,

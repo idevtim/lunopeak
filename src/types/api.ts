@@ -152,6 +152,36 @@ export interface Settings {
   editor: EditorPrefs;
   /** What the Claude Code terminal status line shows. */
   statusline: StatuslinePrefs;
+  /** Other machines' sessions, published by `lunopeak-node`. */
+  remote: RemoteHubPrefs;
+}
+
+export interface RemoteHubPrefs {
+  enabled: boolean;
+  /** The folder the nodes write to (`--out`); its `nodes/` subfolder is read. */
+  folder: string | null;
+}
+
+/** One machine publishing through `lunopeak-node`. Mirrors `hub::RemoteNode`. */
+export interface RemoteNode {
+  host: string;
+  os: string | null;
+  nodeVersion: string | null;
+  /** Its live data changed or heartbeat within the last 3 minutes. */
+  online: boolean;
+  /** Epoch ms the app last saw its live data change. */
+  lastSeen: number | null;
+  sessions: number;
+  includesPrompts: boolean;
+  /** Why some of its data couldn't be used. */
+  problem: string | null;
+}
+
+/** Live rows from every online remote machine. Mirrors `hub::RemoteLive`. */
+export interface RemoteLive {
+  activity: LiveActivity;
+  contexts: LiveContext[];
+  processes: ActiveProcess[];
 }
 
 export type StatuslineSegmentId =
