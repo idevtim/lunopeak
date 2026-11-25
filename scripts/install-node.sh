@@ -9,7 +9,7 @@
 #   curl -fsSL .../install-node.sh | sh -s -- --bind 100.64.0.5   (Tailscale only)
 #
 # Shipped as a release asset next to the binaries it downloads, so it always
-# matches the latest release. Runs as you, never root.
+# matches the latest release. Runs as whoever runs it (root included).
 set -eu
 
 REPO="idevtim/lunopeak"
@@ -26,10 +26,18 @@ case "$(uname -s)" in
   *) echo "Use install-node.ps1 on Windows." >&2; exit 1 ;;
 esac
 
+# Run it as the user whose agents should be shared. As root (usual on a
+# Proxmox host or container) it installs a system service reading root's
+# agent folders.
 if [ "$(id -u)" = "0" ]; then
-  echo "Run this as the user whose coding sessions should be shared, not as root." >&2
-  exit 1
+  echo "Installing for root: sessions of agents run as root on this machine will be shared."
 fi
+for tool in curl tar; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "This installer needs $tool. Install it first (on Debian or Proxmox: apt install $tool)." >&2
+    exit 1
+  fi
+done
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT INT TERM

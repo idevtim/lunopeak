@@ -1378,9 +1378,13 @@ pub async fn pair_machine(
         let mut all = lunopeak_core::direct::paired_machines(&dir);
         all.retain(|x| x.machine_id != m.machine_id);
         let name = m.name.clone();
-        all.push(m);
+        all.push(m.clone());
         lunopeak_core::direct::save_paired_machines(&dir, &all).map_err(|e| e.to_string())?;
-        links.wake();
+        // Fetch it now, so Settings shows it connected (and Live has its
+        // data) as soon as pairing returns, not on the next poll.
+        if let Some(cache) = crate::direct_link::cache_root() {
+            crate::direct_link::fetch_one(&links, &dir, &cache, &m, &[]);
+        }
         Ok(name)
     })
     .await

@@ -729,8 +729,14 @@ function AgentsCategory({ s, update, platform }: { s: Settings; update: Update; 
 function OtherMachines({ s, update }: { s: Settings; update: Update }) {
   const r = s.remote;
   const qc = useQueryClient();
-  const nodes = useQuery({ ...queries.remoteNodes, enabled: r.enabled, refetchInterval: 5_000 });
-  const paired = useQuery({ ...queries.pairedMachines, enabled: r.enabled, refetchInterval: 5_000 });
+  const nodes = useQuery({ ...queries.remoteNodes, enabled: r.enabled, refetchInterval: 3_000 });
+  // Poll faster while a machine has an error or hasn't connected yet, so the
+  // row turns Online (and the error clears) within a couple of seconds.
+  const paired = useQuery({
+    ...queries.pairedMachines,
+    enabled: r.enabled,
+    refetchInterval: (q) => (q.state.data?.some((m) => m.error || m.lastOk == null) ? 1_500 : 5_000),
+  });
   const setRemote = (patch: Partial<Settings["remote"]>) =>
     update((cur) => ({ ...cur, remote: { ...cur.remote, ...patch } }));
 
@@ -813,7 +819,8 @@ function OtherMachines({ s, update }: { s: Settings; update: Update }) {
             <ul className="m-0 flex list-none flex-col gap-2.5 p-0">
               {rows.map(({ id, link, node }) => {
                 const name = node?.host ?? link?.name ?? "Unnamed machine";
-                const problem = link?.error ?? node?.problem;
+                // Once its data is fresh, an older connection error is moot.
+                const problem = node?.online ? null : (link?.error ?? node?.problem);
                 return (
                   <li key={id} className="flex items-start justify-between gap-3">
                     <span className="flex min-w-0 flex-col gap-0.5">
@@ -990,13 +997,35 @@ function ShareThisMachine({ s, update }: { s: Settings; update: Update }) {
         }
         below={
           share.enabled && (statusText || st?.error) ? (
-            <span
-              className={cn(
-                "text-xs",
-                st?.error ? "text-rose-600 dark:text-rose-400" : "text-zinc-500 dark:text-zinc-400",
+            <span className="flex flex-col gap-0.5">
+              <span
+                className={cn(
+                  "text-xs",
+                  st?.error ? "text-rose-600 dark:text-rose-400" : "text-zinc-500 dark:text-zinc-400",
+                )}
+              >
+                {st?.error ?? statusText}
+              </span>
+              {st?.running && !st.error && st.addrs.length > 0 && (
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                  If it doesn't appear in another computer's Add a machine list, type{" "}
+                  <span className="font-mono text-zinc-700 select-all dark:text-zinc-300">{st.addrs[0]}</span>
+                  {st.addrs.length > 1 && (
+                    <>
+                      {" "}
+                      (or{" "}
+                      {st.addrs.slice(1, 3).map((a, i) => (
+                        <span key={a}>
+                          {i > 0 && ", "}
+                          <span className="font-mono select-all">{a}</span>
+                        </span>
+                      ))}
+                      )
+                    </>
+                  )}{" "}
+                  there.
+                </span>
               )}
-            >
-              {st?.error ?? statusText}
             </span>
           ) : undefined
         }
@@ -1124,6 +1153,12 @@ function InstallLine({ label, command }: { label: string; command: string }) {
 function AddMachine({ paired, onPaired }: { paired: PairedMachine[]; onPaired: () => void }) {
   const found = useQuery({ ...queries.discoveredMachines, refetchInterval: 3_000 });
   const nearby = (found.data ?? []).filter((d) => !paired.some((p) => p.machineId === d.machineId));
+  // After a few seconds with nothing found, say how to add one by address.
+  const [searchedLong, setSearchedLong] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSearchedLong(true), 8_000);
+    return () => clearTimeout(t);
+  }, []);
   const [addr, setAddr] = useState("");
   const [code, setCode] = useState("");
   const [probe, setProbe] = useState<MachineProbe | null>(null);
@@ -1199,7 +1234,11 @@ function AddMachine({ paired, onPaired }: { paired: PairedMachine[]; onPaired: (
         </ul>
       ) : (
         <span className="text-xs text-zinc-500 dark:text-zinc-400">
-          {found.isError ? "Couldn't look for machines on this network." : "Looking for machines on this network…"}
+          {found.isError
+            ? "Couldn't look for machines on this network."
+            : searchedLong
+              ? "Nothing found on this network. Type the address instead: a computer with LunoPeak shows it under Share this machine; on a server, lunopeak-node status or its IP address works."
+              : "Looking for machines on this network…"}
         </span>
       )}
       <form

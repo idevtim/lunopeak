@@ -92,11 +92,16 @@ if [ "$MODE" = "release" ]; then
 fi
 
 # ─── Build the image ────────────────────────────────────────────────────────
-if $FORCE_REBUILD || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+# The image is labelled with its Dockerfile's hash, so editing the Dockerfile
+# (say, a new apt package) rebuilds it on the next run without --rebuild.
+DF_HASH=$(shasum -a 256 "$DOCKERFILE" | cut -c1-16)
+IMAGE_HASH=$(docker image inspect -f '{{index .Config.Labels "lunopeak.dockerfile"}}' "$IMAGE" 2>/dev/null || true)
+if $FORCE_REBUILD || [ "$IMAGE_HASH" != "$DF_HASH" ]; then
   echo "🐳 Building image $IMAGE (amd64)..."
-  docker build --platform linux/amd64 -t "$IMAGE" -f "$DOCKERFILE" "$PROJECT_DIR/docker"
+  docker build --platform linux/amd64 --label "lunopeak.dockerfile=$DF_HASH" \
+    -t "$IMAGE" -f "$DOCKERFILE" "$PROJECT_DIR/docker"
 else
-  echo "✓ Image $IMAGE present (--rebuild to refresh)"
+  echo "✓ Image $IMAGE up to date with its Dockerfile (--rebuild to refresh anyway)"
 fi
 
 for vol in "$VOL_NODE_MODULES" "$VOL_CARGO_REGISTRY" "$VOL_CARGO_GIT" "$VOL_TARGET" "$VOL_TAURI_CACHE"; do

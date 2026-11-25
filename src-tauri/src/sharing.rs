@@ -40,6 +40,10 @@ pub struct ShareStatus {
     pub port: Option<u16>,
     /// Advertised on the local network.
     pub discoverable: bool,
+    /// `ip:port` addresses other computers can try, most likely first, for
+    /// pairing by address when this one doesn't show up in their list.
+    #[serde(default)]
+    pub addrs: Vec<String>,
     pub error: Option<String>,
     /// Epoch ms this was written.
     pub updated_at: i64,
@@ -162,6 +166,13 @@ impl Running {
                 name: Some(name),
                 port: self.server.as_ref().map(|(s, _)| s.addr.port()),
                 discoverable: self.advert.is_some(),
+                addrs: {
+                    let port = self.server.as_ref().map_or(direct::DEFAULT_PORT, |(s, _)| s.addr.port());
+                    lunopeak_core::discovery::local_addresses()
+                        .into_iter()
+                        .map(|ip| std::net::SocketAddr::new(ip, port).to_string())
+                        .collect()
+                },
                 error: errors.into_iter().next().or_else(|| self.last_error.clone()),
                 updated_at: now_ms(),
             },

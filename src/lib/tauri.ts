@@ -199,6 +199,7 @@ export const api = {
       name: null,
       port: null,
       discoverable: false,
+      addrs: [],
       error: null,
       updatedAt: 0,
     }),

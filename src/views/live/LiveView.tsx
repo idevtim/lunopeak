@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Bot, Check, Code2, Folder, MessageCircle, Monitor, Sparkles, Square, X } from "lucide-react";
+import { Activity, Bot, Check, Code2, Folder, MessageCircle, Sparkles, Square, X } from "lucide-react";
 import { queries } from "@/lib/queries";
 import { api } from "@/lib/tauri";
 import { useDelayedLoading } from "@/hooks/useDelayedLoading";
@@ -11,6 +11,7 @@ import { Pill, type PillTone } from "@/components/ui/Pill";
 import { Button } from "@/components/ui/Button";
 import { EmptyState, ErrorState } from "@/components/ui/PageStates";
 import { LiveDot } from "@/components/ui/LiveDot";
+import { MachinePill } from "@/components/ui/MachinePill";
 import { ProviderIcon } from "@/components/ui/ProviderIcon";
 import {
   ContextBar,
@@ -45,6 +46,10 @@ import {
   subagentTypeLabel,
   type SessionState,
 } from "./describe";
+
+/** How recent another machine's session must be to get a card of its own
+ *  when that machine reported no matching process. */
+const ORPHAN_WINDOW_MS = 10 * 60 * 1000;
 
 const STATE_TONE: Record<SessionState, PillTone> = {
   working: "green",
@@ -178,7 +183,29 @@ export function LiveView() {
     claimed.add(next.sessionId);
   }
 
-  const rows = sorted.map((p) => {
+  // A recent session on another machine still gets a card when that machine
+  // didn't report a matching process (its process scan can miss one, as on
+  // Windows when an agent runs under an unexpected name or folder). These
+  // cards have no pid, runtime or memory.
+  const orphans: ActiveProcess[] = [];
+  for (const s of sessions) {
+    if (!s.host || claimed.has(s.sessionId) || now - s.lastTs > ORPHAN_WINDOW_MS) continue;
+    const proc: ActiveProcess = {
+      host: s.host,
+      pid: -(orphans.length + 1),
+      name: s.agent,
+      cwd: s.cwd,
+      runtimeSec: -1,
+      memoryKb: 0,
+    };
+    orphans.push(proc);
+    sessionByPid.set(pidKey(proc.host, proc.pid), s);
+    claimed.add(s.sessionId);
+  }
+  const allProcs = [...sorted, ...orphans];
+  const remoteCount = allProcs.filter((p) => p.host).length;
+
+  const rows = allProcs.map((p) => {
     const session = sessionByPid.get(pidKey(p.host, p.pid));
     const context = contextFor(p);
     const subagentsRunning = Math.max(
@@ -217,13 +244,20 @@ export function LiveView() {
           Live
         </h1>
         <div className="flex items-center gap-2">
-          {list.length > 0 && <LiveDot size="md" tone="emerald" />}
+          {allProcs.length > 0 && <LiveDot size="md" tone="emerald" />}
           <Lead>
-            {list.length === 0 ? (
+            {allProcs.length === 0 ? (
               "No agents running right now."
             ) : (
               <>
-                <b>{plural(list.length, "session")}</b> open. {parts.join(", ")}.
+                <b>{plural(allProcs.length, "session")}</b> open
+                {remoteCount > 0 && (
+                  <>
+                    {" "}
+                    ({allProcs.length - remoteCount} here, {remoteCount} on other machines)
+                  </>
+                )}
+                . {parts.join(", ")}.
               </>
             )}
           </Lead>
@@ -232,7 +266,7 @@ export function LiveView() {
 
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="flex min-w-0 flex-col gap-3">
-          {list.length === 0 ? (
+          {allProcs.length === 0 ? (
             <EmptyState
               icon={Activity}
               title="No agents running"
@@ -288,10 +322,10 @@ function SessionCard({ proc, samples, session, context, state, now }: SessionCar
   const folder = basename(proc.cwd);
   const model = shortModel(context?.model ?? null);
   const subline = [
-    proc.host,
     folder !== title ? folder : null,
     model,
-    `running ${runningFor(proc.runtimeSec)}`,
+    // Cards for another machine's session with no matching process have no runtime.
+    proc.runtimeSec >= 0 ? `running ${runningFor(proc.runtimeSec)}` : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -325,24 +359,21 @@ function SessionCard({ proc, samples, session, context, state, now }: SessionCar
           </span>
           <span className="truncate text-xs text-zinc-500 dark:text-zinc-400">{subline}</span>
         </div>
-        {proc.host && (
-          <Pill className="shrink-0" title={`Running on ${proc.host}`}>
-            <Monitor size={11} strokeWidth={2} />
-            {proc.host}
-          </Pill>
+        {proc.host && <MachinePill host={proc.host} />}
+        {!proc.host && (
+          <span
+            className="hidden shrink-0 items-center gap-1.5 text-[11.5px] tabular-nums text-zinc-500 sm:flex dark:text-zinc-400"
+            title={`Memory use over the last ${samples?.samples.length ?? 0} samples · PID ${proc.pid}`}
+          >
+            <Sparkbars
+              values={samples?.samples ?? []}
+              bars={24}
+              className="h-3 w-12"
+              barClassName={state === "working" ? "bg-emerald-400/70" : undefined}
+            />
+            {memMb} MB
+          </span>
         )}
-        <span
-          className="hidden shrink-0 items-center gap-1.5 text-[11.5px] tabular-nums text-zinc-500 sm:flex dark:text-zinc-400"
-          title={`Memory use over the last ${samples?.samples.length ?? 0} samples · PID ${proc.pid}`}
-        >
-          <Sparkbars
-            values={samples?.samples ?? []}
-            bars={24}
-            className="h-3 w-12"
-            barClassName={state === "working" ? "bg-emerald-400/70" : undefined}
-          />
-          {memMb} MB
-        </span>
         <Pill tone={STATE_TONE[state]} className="shrink-0">
           <span className={cn("size-1.5 rounded-full", STATE_DOT[state])} />
           {SESSION_STATE_LABEL[state]}
@@ -405,7 +436,9 @@ function SessionCard({ proc, samples, session, context, state, now }: SessionCar
       <div className="flex flex-wrap items-center gap-3 border-t border-black/[0.05] pt-2.5 dark:border-white/[0.06]">
         <ChatMemory context={context} />
         {proc.host ? (
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">On {proc.host}</span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            Running on {proc.host}. Stop it or open its files there.
+          </span>
         ) : (
           <SessionActions
             proc={proc}

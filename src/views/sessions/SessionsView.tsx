@@ -1,6 +1,7 @@
+import { MachinePill } from "@/components/ui/MachinePill";
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Bot, ChevronRight, History, Monitor, Search } from "lucide-react";
+import { Bot, ChevronRight, History, Search } from "lucide-react";
 import { queries } from "@/lib/queries";
 import { useDelayedLoading } from "@/hooks/useDelayedLoading";
 import { useHashRoute } from "@/hooks/useHashRoute";
@@ -26,8 +27,10 @@ const RANGE_OPTIONS: { value: Range; label: string }[] = [
 ];
 
 const DAY_MS = 86_400_000;
-const ALL_MACHINES = "*all"; // host names are [a-z0-9_-], so these can't collide
-const THIS_MACHINE = "*local";
+// Machine labels come from the user, but a filter value starting with "\u0000"
+// can't be typed into a name, so these never collide with one.
+const ALL_MACHINES = "\u0000all";
+const THIS_MACHINE = "\u0000local";
 const PAGE_SIZE = 60;
 
 export function SessionsView() {
@@ -282,6 +285,7 @@ function SessionRow({
       <span className="flex min-w-0 flex-col gap-px">
         <span className="flex min-w-0 items-center gap-[7px] text-[13.5px] text-zinc-900 dark:text-zinc-100">
           <span className="truncate">{title}</span>
+          {s.host && <MachinePill host={s.host} />}
           {running && (
             <Pill tone="green" className="shrink-0">
               Running
@@ -290,12 +294,6 @@ function SessionRow({
         </span>
         <span className="truncate text-xs text-zinc-500 dark:text-zinc-400">
           {[
-            s.host && (
-              <span key="h" title={`Ran on ${s.host}`}>
-                <Monitor size={11} strokeWidth={2} className="mb-px mr-0.5 inline" />
-                {s.host}
-              </span>
-            ),
             title !== meta.repo && meta.repo,
             meta.branch && (
               <span key="b" className="font-mono text-[11.5px]">

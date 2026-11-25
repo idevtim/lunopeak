@@ -63,3 +63,6 @@ base64 = "0.22"
 # Finding sharing machines on the local network (Bonjour / mDNS), pure Rust,
 # so Windows and Linux need no Bonjour or Avahi installed.
 mdns-sd = "0.13"
+# This machine's addresses, to show under Share this machine (same version
+# mdns-sd already uses).
+if-addrs = "0.13"

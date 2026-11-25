@@ -1,0 +1,4 @@
+# Shell scripts must keep LF line endings on every checkout. A Windows
+# checkout with core.autocrlf converted install-node.sh to CRLF, and the
+# Windows release upload replaced the good copy: `sh` then failed on Linux.
+*.sh text eol=lf

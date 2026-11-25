@@ -916,5 +916,11 @@ mod tests {
         );
         assert_eq!(mc.all.total_usd, 9.0);
         assert_eq!(*mc.all.by_day.last().unwrap(), 9.0);
+        // Project rows say which other machines their spend came from.
+        let row = &mc.all.by_repo[0];
+        assert_eq!(row.hosts, ["a", "b"]);
+        assert!(row.on_this_machine);
+        let remote_only = crate::scanners::sessions::costs(&remote);
+        assert!(!remote_only.by_repo[0].on_this_machine);
     }
 }

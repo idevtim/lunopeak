@@ -386,6 +386,8 @@ export const costs: CostBreakdown = {
     sessions: 32 - i * 4,
     tokens: (3_100_000 - i * 420_000) | 0,
     messages: (720 - i * 90) | 0,
+    hosts: [],
+    onThisMachine: true,
   })),
   byDay: Array.from({ length: 30 }, (_, i) => {
     const dow = i % 7;

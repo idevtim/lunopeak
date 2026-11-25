@@ -375,7 +375,9 @@ foreach ($b in $bundles) {
   if ($b.Sig) { $assets += $b.Sig.FullName }
   $assets += $b.NodeZip
 }
-$assets += (Join-Path $PSScriptRoot 'install-node.sh')
+# Only the PowerShell installer ships from here: a Windows checkout can turn
+# install-node.sh's line endings into CRLF, which breaks it on Linux. The
+# macOS and Linux builds upload install-node.sh.
 $assets += (Join-Path $PSScriptRoot 'install-node.ps1')
 if ($signingEnabled) { $assets += $latestJsonPath }
 

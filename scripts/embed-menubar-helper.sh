@@ -89,6 +89,20 @@ cat > "$HELPER_APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+# Network privacy keys. "Share this machine" serves and advertises from this
+# helper, not the window process, and without these macOS blocks its local
+# network access silently instead of asking. Copied from the main app's
+# Info.plist (src-tauri/Info.plist), so there's one source for the wording.
+for key in NSLocalNetworkUsageDescription NSBonjourServices; do
+  if frag=$(plutil -extract "$key" xml1 -o - "$MAIN_PLIST" 2>/dev/null); then
+    val=$(printf '%s\n' "$frag" | sed -e '1,/<plist/d' -e '/<\/plist>/,$d')
+    plutil -insert "$key" -xml "$val" "$HELPER_APP/Contents/Info.plist"
+  else
+    echo "❌ $MAIN_PLIST has no $key; the menu-bar helper couldn't share on the network."
+    exit 1
+  fi
+done
+
 # ── Signing ──────────────────────────────────────────────────────────────────
 # The helper runs a WebKit webview (the popover), so it needs the same JIT /
 # unsigned-memory entitlements the main app has. Pull them straight off the
