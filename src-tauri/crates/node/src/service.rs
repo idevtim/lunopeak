@@ -80,6 +80,26 @@ pub fn install(state_dir: &Path, args: &[String]) -> Result<Vec<String>, String>
     let _ = std::fs::create_dir_all(&logs);
     let mut notes = vec![format!("Installed to {}", exe.display())];
     notes.extend(platform::install(&exe, args, &logs)?);
+    // The service manager starts it asynchronously; give it a moment before
+    // saying whether it's up.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let running = loop {
+        if platform::status().1 == Some(true) {
+            break true;
+        }
+        if std::time::Instant::now() >= deadline {
+            break false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    };
+    notes.push(if running {
+        "Running now.".to_string()
+    } else {
+        format!(
+            "It hasn't started yet. If `lunopeak-node status` still says not running, see {}",
+            logs.join("service.log").display()
+        )
+    });
     Ok(notes)
 }
 
