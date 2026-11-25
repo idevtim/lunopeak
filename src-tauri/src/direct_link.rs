@@ -27,9 +27,17 @@ const POLL: Duration = Duration::from_secs(5);
 pub struct LinkStatus {
     /// Epoch ms of the last successful fetch.
     pub last_ok: Option<i64>,
-    /// Why the last fetch failed, in words for the user.
+    /// Why fetching keeps failing, in words for the user. Set only after
+    /// [`FAILURES_BEFORE_ERROR`] failures in a row: one slow answer (a
+    /// connect timeout on a busy network) right before a success shouldn't
+    /// flash a firewall warning.
     pub error: Option<String>,
+    #[serde(skip)]
+    failures: u32,
 }
+
+/// Consecutive failed fetches before Settings shows an error.
+const FAILURES_BEFORE_ERROR: u32 = 2;
 
 #[derive(Default)]
 struct Inner {
@@ -63,20 +71,24 @@ impl DirectLinks {
     fn set(&self, id: &str, name: &str, result: Result<(), String>) {
         if let Ok(mut i) = self.inner.0.lock() {
             let s = i.status.entry(id.to_string()).or_default();
-            // Log changes of state, not every poll, so a machine that's off
-            // overnight leaves two lines, not ten thousand.
-            match (&s.error, &result) {
-                (Some(_), Ok(())) => crate::elog!(info, "direct", "{name}: connected again"),
-                (None, Err(e)) => crate::elog!(warn, "direct", "{name}: {e}"),
-                (Some(was), Err(e)) if was != e => crate::elog!(warn, "direct", "{name}: {e}"),
-                _ => {}
-            }
             match result {
                 Ok(()) => {
+                    // Log changes of state, not every poll, so a machine
+                    // that's off overnight leaves two lines, not thousands.
+                    if s.error.is_some() {
+                        crate::elog!(info, "direct", "{name}: connected again");
+                    }
                     s.last_ok = Some(now_ms());
                     s.error = None;
+                    s.failures = 0;
                 }
-                Err(e) => s.error = Some(e),
+                Err(e) => {
+                    s.failures += 1;
+                    if s.failures >= FAILURES_BEFORE_ERROR && s.error.as_ref() != Some(&e) {
+                        crate::elog!(warn, "direct", "{name}: {e}");
+                        s.error = Some(e);
+                    }
+                }
             }
         }
     }
