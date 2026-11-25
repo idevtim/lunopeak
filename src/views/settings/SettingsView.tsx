@@ -749,7 +749,7 @@ function OtherMachines({ s, update }: { s: Settings; update: Update }) {
     >
       <SettingRow
         label="Show other machines"
-        hint="Adds their running agents to Live and their history to Sessions. Costs, the menu bar and alerts stay this machine only."
+        hint="Adds their running agents to Live, their history to Sessions and their spend to Costs. The menu bar and budget alerts stay this machine only."
         keywords="remote machines node sync other computers hosts"
         control={
           <Switch
