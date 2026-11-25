@@ -1213,6 +1213,14 @@ pub async fn get_paired_machines(
     .await
 }
 
+/// Sharing machines advertised on the local network, minus this one.
+#[tauri::command]
+pub async fn get_discovered_machines(
+    app: AppHandle,
+) -> Result<Vec<lunopeak_core::discovery::Discovered>, String> {
+    blocking(move || app.state::<crate::direct_link::Discovery>().machines()).await
+}
+
 #[tauri::command]
 pub async fn probe_machine(addr: String) -> Result<MachineProbe, String> {
     blocking(move || {

@@ -194,6 +194,15 @@ export interface PairedMachine {
   error: string | null;
 }
 
+/** A sharing machine advertised on the local network. Mirrors `discovery::Discovered`. */
+export interface DiscoveredMachine {
+  machineId: string;
+  name: string;
+  /** `ip:port` to try, most likely reachable first. */
+  addrs: string[];
+  version: string | null;
+}
+
 /** What a machine at an address says about itself. Mirrors `commands::MachineProbe`. */
 export interface MachineProbe {
   addr: string;

@@ -120,6 +120,11 @@ export const queries = {
     queryFn: api.getRemoteNodes,
     staleTime: 5 * 1000,
   },
+  discoveredMachines: {
+    queryKey: ["discovered-machines"] as const,
+    queryFn: api.getDiscoveredMachines,
+    staleTime: 2 * 1000,
+  },
   pairedMachines: {
     queryKey: ["paired-machines"] as const,
     queryFn: api.getPairedMachines,

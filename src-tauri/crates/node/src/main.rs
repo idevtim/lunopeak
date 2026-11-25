@@ -164,7 +164,21 @@ fn start(mut args: Args) {
         } else {
             eprintln!("  shared with {paired} app(s)");
         }
-        server
+        // Advertise on the local network only when listening on it: a
+        // server bound to one private address (say Tailscale) is reached by
+        // that address instead.
+        let advert = if bind.ip().is_unspecified() {
+            match lunopeak_core::discovery::advertise(&args.machine_id, &args.name, server.addr.port()) {
+                Ok(a) => Some(a),
+                Err(e) => {
+                    eprintln!("  couldn't advertise on the local network ({e}); pair by address instead");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        (server, advert)
     });
     loop {
         std::thread::sleep(args.interval);

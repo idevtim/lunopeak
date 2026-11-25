@@ -840,7 +840,7 @@ function OtherMachines({ s, update }: { s: Settings; update: Update }) {
           )}
         </SettingBlock>
       )}
-      {r.enabled && <AddMachine onPaired={refresh} />}
+      {r.enabled && <AddMachine paired={pairedList} onPaired={refresh} />}
       <SettingRow
         label="Shared folder"
         hint={
@@ -868,14 +868,17 @@ function OtherMachines({ s, update }: { s: Settings; update: Update }) {
 }
 
 /** Find a machine by address, then pair with the code it shows. */
-function AddMachine({ onPaired }: { onPaired: () => void }) {
+function AddMachine({ paired, onPaired }: { paired: PairedMachine[]; onPaired: () => void }) {
+  const found = useQuery({ ...queries.discoveredMachines, refetchInterval: 3_000 });
+  const nearby = (found.data ?? []).filter((d) => !paired.some((p) => p.machineId === d.machineId));
   const [addr, setAddr] = useState("");
   const [code, setCode] = useState("");
   const [probe, setProbe] = useState<MachineProbe | null>(null);
   const [busy, setBusy] = useState<"find" | "pair" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const find = async () => {
+  /** Ask each address in turn; the first that answers wins. */
+  const find = async (targets: string[] = [addr]) => {
     if (!isTauri()) {
       toast.info("Pairing needs the desktop app");
       return;
@@ -883,15 +886,21 @@ function AddMachine({ onPaired }: { onPaired: () => void }) {
     setBusy("find");
     setError(null);
     setProbe(null);
-    try {
-      const p = await api.probeMachine(addr);
-      if (p.isSelf) setError("That's this machine.");
-      else setProbe(p);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(null);
+    let lastError: string | null = null;
+    for (const target of targets) {
+      try {
+        const p = await api.probeMachine(target);
+        setAddr(p.addr);
+        if (p.isSelf) setError("That's this machine.");
+        else setProbe(p);
+        lastError = null;
+        break;
+      } catch (e) {
+        lastError = String(e);
+      }
     }
+    if (lastError) setError(lastError);
+    setBusy(null);
   };
 
   const pair = async () => {
@@ -918,8 +927,27 @@ function AddMachine({ onPaired }: { onPaired: () => void }) {
       <p className="m-0 text-xs text-zinc-500 dark:text-zinc-400">
         On the other computer, run{" "}
         <code className="font-mono text-[11.5px]">lunopeak-node --listen</code>, then{" "}
-        <code className="font-mono text-[11.5px]">lunopeak-node pair</code> for a code. Enter its address here.
+        <code className="font-mono text-[11.5px]">lunopeak-node pair</code> for a code. Pick it below, or enter
+        its address (a Tailscale address works too).
       </p>
+      {nearby.length > 0 ? (
+        <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
+          {nearby.map((d) => (
+            <li key={d.machineId}>
+              <Button
+                disabled={busy !== null}
+                onClick={() => void find(d.addrs)}
+              >
+                <span className="font-mono">{d.name}</span>
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">
+          {found.isError ? "Couldn't look for machines on this network." : "Looking for machines on this network…"}
+        </span>
+      )}
       <form
         className="flex flex-wrap items-center gap-2"
         onSubmit={(e) => {

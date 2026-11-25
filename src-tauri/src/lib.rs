@@ -108,6 +108,7 @@ pub fn run() {
         .manage(CodexCache::new())
         .manage(lunopeak_core::hub::Hub::new())
         .manage(direct_link::DirectLinks::default())
+        .manage(direct_link::Discovery::default())
         .manage(GithubCache::default())
         .manage(InsightsPrCache::default())
         .setup(move |app| {
@@ -290,6 +291,7 @@ pub fn run() {
             commands::get_remote_sessions,
             commands::get_machine_costs,
             commands::get_paired_machines,
+            commands::get_discovered_machines,
             commands::probe_machine,
             commands::pair_machine,
             commands::unpair_machine,

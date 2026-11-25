@@ -167,3 +167,28 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
 }
+
+/// Browses the local network for sharing machines, started the first time
+/// Settings asks (so macOS's Local Network prompt appears only when someone
+/// is adding a machine), and kept for the life of the window process.
+#[derive(Default)]
+pub struct Discovery {
+    browser: Mutex<Option<lunopeak_core::discovery::Browser>>,
+}
+
+impl Discovery {
+    pub fn machines(&self) -> Result<Vec<lunopeak_core::discovery::Discovered>, String> {
+        let mut guard = self.browser.lock().map_err(|_| "discovery is busy".to_string())?;
+        if guard.is_none() {
+            *guard = Some(lunopeak_core::discovery::Browser::start()?);
+        }
+        let me = lunopeak_core::node_wire::local_machine_id();
+        Ok(guard
+            .as_ref()
+            .map(|b| b.machines())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| Some(&d.machine_id) != me.as_ref())
+            .collect())
+    }
+}

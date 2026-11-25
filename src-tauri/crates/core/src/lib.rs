@@ -7,6 +7,7 @@
 #[macro_use]
 pub mod logger;
 pub mod direct;
+pub mod discovery;
 pub mod feeds;
 pub mod hub;
 pub mod models;
