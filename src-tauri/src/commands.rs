@@ -1154,13 +1154,56 @@ fn remote_root(app: &AppHandle, cache: &SettingsCache) -> Option<(std::path::Pat
 pub async fn get_remote_nodes(
     app: AppHandle,
     hub: State<'_, Hub>,
+    cache: State<'_, SessionsCache>,
+    codex_cache: State<'_, CodexCache>,
     settings_cache: State<'_, SettingsCache>,
 ) -> Result<Vec<RemoteNode>, String> {
     let Some((root, me)) = remote_root(&app, settings_cache.inner()) else {
         return Ok(Vec::new());
     };
+    let claude_on = claude_enabled(&app, settings_cache.inner());
+    let codex_on = codex_enabled(&app, settings_cache.inner());
     let hub = hub.inner().clone();
-    blocking(move || Ok(hub.nodes(&root, me.as_deref()))).await
+    let cache = cache.inner().clone();
+    let codex_cache = codex_cache.inner().clone();
+    blocking(move || {
+        let local = local_sessions(&cache, &codex_cache, claude_on, codex_on)?;
+        let ids: std::collections::HashSet<String> = local.into_iter().map(|s| s.id).collect();
+        // Count what each node actually adds, not what it published: sessions
+        // this machine (or an earlier node) already has are dropped.
+        let mut added: std::collections::HashMap<String, usize> = Default::default();
+        for agent in ["claude", "codex"] {
+            for s in hub.sessions(&root, me.as_deref(), agent, &ids) {
+                if let Some(h) = s.host {
+                    *added.entry(h).or_default() += 1;
+                }
+            }
+        }
+        let mut nodes = hub.nodes(&root, me.as_deref());
+        for n in &mut nodes {
+            n.sessions = added.get(&n.host).copied().unwrap_or(0);
+        }
+        Ok(nodes)
+    })
+    .await
+}
+
+/// This machine's Claude and Codex sessions, each only if that agent is on.
+fn local_sessions(
+    cache: &SessionsCache,
+    codex_cache: &CodexCache,
+    claude_on: bool,
+    codex_on: bool,
+) -> Result<Vec<Session>, String> {
+    let mut local = if claude_on {
+        scanners::sessions::scan_all(cache).map_err(|e| e.to_string())?
+    } else {
+        Vec::new()
+    };
+    if codex_on {
+        local.extend(scanners::codex::scan_all(codex_cache).map_err(|e| e.to_string())?);
+    }
+    Ok(local)
 }
 
 #[tauri::command]
@@ -1225,14 +1268,7 @@ pub async fn get_machine_costs(
     let cache = cache.inner().clone();
     let codex_cache = codex_cache.inner().clone();
     blocking(move || {
-        let mut local = if claude_on {
-            scanners::sessions::scan_all(&cache).map_err(|e| e.to_string())?
-        } else {
-            Vec::new()
-        };
-        if codex_on {
-            local.extend(scanners::codex::scan_all(&codex_cache).map_err(|e| e.to_string())?);
-        }
+        let local = local_sessions(&cache, &codex_cache, claude_on, codex_on)?;
         let ids: std::collections::HashSet<String> = local.iter().map(|s| s.id.clone()).collect();
         // Each node already applied its own machine's agent settings.
         let mut remote = hub.sessions(&root, me.as_deref(), "claude", &ids);

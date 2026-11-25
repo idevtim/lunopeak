@@ -41,7 +41,8 @@ pub struct RemoteNode {
     pub online: bool,
     /// Epoch ms the hub last saw this node's live data change or heartbeat.
     pub last_seen: Option<i64>,
-    /// Claude + Codex sessions it published.
+    /// Claude + Codex sessions it published. `get_remote_nodes` replaces this
+    /// with how many it adds once ids this machine already has are dropped.
     pub sessions: usize,
     /// Published with `--share-prompts`.
     pub includes_prompts: bool,
