@@ -175,7 +175,17 @@ struct NodeView {
     sessions: Option<EntryView<SessionsData>>,
 }
 
+impl NodeView {
+    /// When its newest file was written, by its own clock.
+    fn generated_at(&self) -> i64 {
+        let live = self.live.as_ref().map_or(0, |e| e.generated_at);
+        let sessions = self.sessions.as_ref().map_or(0, |e| e.generated_at);
+        live.max(sessions)
+    }
+}
+
 struct EntryView<T> {
+    generated_at: i64,
     seen_change: SystemTime,
     name: Option<String>,
     node_version: Option<String>,
@@ -326,10 +336,10 @@ impl Hub {
 
     /// Re-read whatever changed under each `root/nodes/` and return every
     /// node. A machine found under more than one root (paired directly and
-    /// also writing to a shared folder) is read from the first.
+    /// also writing to a shared folder) is read from whichever copy is newer,
+    /// the first root winning a tie.
     fn refresh(&self, roots: &[impl AsRef<Path>], skip_id: Option<&str>) -> Vec<NodeView> {
         let mut found: Vec<(String, PathBuf)> = Vec::new();
-        let mut seen: HashSet<String> = HashSet::new();
         for root in roots {
             let dir = root.as_ref().join(node_wire::NODES_DIR);
             let Ok(read) = std::fs::read_dir(&dir) else {
@@ -345,10 +355,8 @@ impl Hub {
                 .collect();
             ids.sort();
             for id in ids {
-                if seen.insert(id.clone()) {
-                    let folder = dir.join(&id);
-                    found.push((id, folder));
-                }
+                let folder = dir.join(&id);
+                found.push((id, folder));
             }
         }
 
@@ -357,7 +365,7 @@ impl Hub {
         };
         let mut keep_live = HashSet::new();
         let mut keep_sessions = HashSet::new();
-        let mut views: Vec<NodeView> = found
+        let views: Vec<NodeView> = found
             .into_iter()
             .map(|(id, folder)| {
                 let live_path = folder.join(node_wire::LIVE_FILE);
@@ -380,6 +388,19 @@ impl Hub {
             .collect();
         state.live.retain(|p, _| keep_live.contains(p));
         state.sessions.retain(|p, _| keep_sessions.contains(p));
+        // One view per machine: the newest copy, earlier roots winning ties
+        // (`max_by_key` keeps the last max, so walk the roots in reverse).
+        let mut best: HashMap<String, NodeView> = HashMap::new();
+        for v in views.into_iter().rev() {
+            let newer = best
+                .get(&v.id)
+                .is_none_or(|b| v.generated_at() >= b.generated_at());
+            if newer {
+                best.insert(v.id.clone(), v);
+            }
+        }
+        let mut views: Vec<NodeView> = best.into_values().collect();
+        views.sort_by(|a, b| a.id.cmp(&b.id));
         unique_labels(&mut views);
         views
     }
@@ -441,6 +462,7 @@ fn load<T: DeserializeOwned>(
     }
     let e = cache.get(path)?;
     Some(EntryView {
+        generated_at: e.generated_at,
         seen_change: e.seen_change,
         name: e.name.clone(),
         node_version: e.node_version.clone(),
@@ -757,7 +779,7 @@ mod tests {
     }
 
     #[test]
-    fn a_machine_in_two_roots_is_read_from_the_first() {
+    fn a_machine_in_two_roots_is_read_from_the_newer_copy() {
         let direct = tempfile::tempdir().unwrap();
         let folder = tempfile::tempdir().unwrap();
         let one = |sid: &str| SessionsData {
@@ -775,6 +797,26 @@ mod tests {
             .map(|s| s.id)
             .collect();
         assert!(ids.contains(&"fresh".to_string()) && !ids.contains(&"synced".to_string()));
+
+        // The direct copy goes stale while the folder keeps updating.
+        let later = serde_json::to_string(&Envelope {
+            schema: 1,
+            machine_id: id("box"),
+            name: "box".into(),
+            node_version: "2.5.0".into(),
+            os: "linux".into(),
+            generated_at: 99,
+            includes_prompts: false,
+            data: one("synced"),
+        })
+        .unwrap();
+        write(folder.path(), "box", "sessions.json", &later);
+        let ids: Vec<String> = hub
+            .sessions(&roots, None, "claude", &HashSet::new())
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        assert!(ids.contains(&"synced".to_string()) && !ids.contains(&"fresh".to_string()));
     }
 
     #[test]

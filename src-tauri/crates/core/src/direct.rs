@@ -275,6 +275,9 @@ struct ServerState {
     tls: Arc<rustls::ServerConfig>,
     pending: Mutex<HashMap<String, Pending>>,
     open: AtomicUsize,
+    /// Serializes reading and spending the pairing window's tries, so
+    /// parallel attempts can't share one.
+    attempts: Mutex<()>,
 }
 
 /// Start serving on `cfg.bind` in background threads.
@@ -300,6 +303,7 @@ pub fn serve(cfg: ServeConfig) -> std::io::Result<Server> {
         tls: Arc::new(tls),
         pending: Mutex::new(HashMap::new()),
         open: AtomicUsize::new(0),
+        attempts: Mutex::new(()),
     });
     let stop_flag = stop.clone();
     std::thread::Builder::new()
@@ -493,7 +497,11 @@ fn pair_start(state: &ServerState, body: &[u8]) -> Response {
     let Ok(their_msg) = b64().decode(&req.msg) else {
         return Response::error(400, "Bad request");
     };
-    let Some(code) = take_attempt(&state.cfg.state_dir) else {
+    let code = match state.attempts.lock() {
+        Ok(_guard) => take_attempt(&state.cfg.state_dir),
+        Err(_) => None,
+    };
+    let Some(code) = code else {
         return Response::error(
             403,
             "Pairing isn't open on that machine, or it ran out of tries. Start pairing there again.",
@@ -617,6 +625,8 @@ pub enum DirectError {
     CertificateChanged,
     /// It no longer knows this hub's token.
     NotPaired,
+    /// It has nothing at that path (a snapshot not published yet).
+    NotFound,
     /// Anything else it said, in its words.
     Refused(String),
 }
@@ -630,6 +640,7 @@ impl std::fmt::Display for DirectError {
                 "It answered with a different certificate. If it was reinstalled, pair it again."
             ),
             DirectError::NotPaired => write!(f, "It no longer shares with this machine. Pair it again."),
+            DirectError::NotFound => write!(f, "It has nothing to share yet."),
             DirectError::Refused(e) => write!(f, "{e}"),
         }
     }
@@ -751,6 +762,7 @@ fn request(
     let reply = read_reply(&mut tls).map_err(|e| tls_error(verifier, e))?;
     match reply.status {
         401 => Err(DirectError::NotPaired),
+        404 => Err(DirectError::NotFound),
         200 | 304 => Ok(reply),
         _ => {
             let msg = serde_json::from_slice::<serde_json::Value>(&reply.body)
@@ -895,7 +907,7 @@ pub fn sync(
         let reply = match request(&machine.addr, &verifier, "GET", &format!("/v1/files/{file}"), &headers, &[]) {
             Ok(r) => r,
             // Not published yet (sessions are scanned after live data).
-            Err(DirectError::Refused(_)) => continue,
+            Err(DirectError::NotFound) => continue,
             Err(e) => return Err(e),
         };
         if reply.status == 304 {
@@ -908,6 +920,34 @@ pub fn sync(
         }
     }
     Ok(())
+}
+
+/// [`sync`], trying `machine.addr` first and then each of `alternates` (say,
+/// where discovery last saw it). Returns the address that worked when it
+/// isn't the saved one, so the caller can remember it. The token and pinned
+/// certificate are what's trusted; an address is only where to look.
+pub fn sync_any(
+    machine: &PairedMachine,
+    alternates: &[String],
+    cache_root: &Path,
+    etags: &mut HashMap<String, String>,
+) -> Result<Option<String>, DirectError> {
+    let first = match sync(machine, cache_root, etags) {
+        Err(DirectError::Unreachable(e)) => DirectError::Unreachable(e),
+        other => return other.map(|_| None),
+    };
+    for addr in alternates.iter().filter(|a| **a != machine.addr) {
+        let moved = PairedMachine {
+            addr: addr.clone(),
+            ..machine.clone()
+        };
+        match sync(&moved, cache_root, etags) {
+            Ok(()) => return Ok(Some(addr.clone())),
+            Err(DirectError::Unreachable(_)) => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(first)
 }
 
 // ── Paired machines (hub side) ──────────────────────────────────────────
@@ -1219,6 +1259,50 @@ mod tests {
         );
         assert!(reply.is_err());
         s.server.stop();
+    }
+
+    #[test]
+    fn parallel_wrong_codes_each_use_a_try() {
+        let s = sharer();
+        let addr = s.server.addr.to_string();
+        let code = open_pairing(s.state.path()).unwrap();
+        let wrong = if code == "000000" { "111111" } else { "000000" };
+        let started: usize = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..12)
+                .map(|_| scope.spawn(|| pair(&addr, wrong, HUB, "Mallory")))
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .filter(|r| !matches!(r, Err(e) if e.to_string().contains("isn't open")))
+                .count()
+        });
+        assert!(started <= PAIR_ATTEMPTS as usize, "{started} attempts got a try");
+        assert!(!pairing_open(s.state.path()));
+        s.server.stop();
+    }
+
+    #[test]
+    fn finds_a_machine_that_moved_to_another_address() {
+        let s = sharer();
+        let code = open_pairing(s.state.path()).unwrap();
+        let m = pair(&s.server.addr.to_string(), &code, HUB, "Me").unwrap();
+        s.server.stop();
+        // Same machine (same state dir, so same certificate), new port.
+        let moved = serve(ServeConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            state_dir: s.state.path().to_path_buf(),
+            outbox: s.outbox.path().to_path_buf(),
+            name: "Build box".into(),
+        })
+        .unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let mut etags = HashMap::new();
+        assert!(matches!(sync(&m, cache.path(), &mut etags), Err(DirectError::Unreachable(_))));
+        let new_addr = moved.addr.to_string();
+        let got = sync_any(&m, &["127.0.0.1:1".into(), new_addr.clone()], cache.path(), &mut etags).unwrap();
+        assert_eq!(got, Some(new_addr));
+        moved.stop();
     }
 
     #[test]

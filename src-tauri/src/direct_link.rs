@@ -105,7 +105,7 @@ pub fn start(app: AppHandle) {
                 .map(|s| s.remote.enabled)
                 .unwrap_or(false);
             if enabled {
-                sync_all(&links);
+                sync_all(&links, &app.state::<Discovery>());
             }
             links.sleep();
         });
@@ -113,15 +113,27 @@ pub fn start(app: AppHandle) {
 
 /// Fetch every paired machine at once, so one that's off (a 5s connect
 /// timeout) doesn't hold up the rest.
-fn sync_all(links: &DirectLinks) {
+fn sync_all(links: &DirectLinks, discovery: &Discovery) {
     let (Some(dir), Some(cache)) = (app_dir(), cache_root()) else {
         return;
     };
     let machines = direct::paired_machines(&dir);
     links.forget_others(&machines);
     remove_unpaired_caches(&cache, &machines);
+    if machines.is_empty() {
+        return;
+    }
+    // Where each machine is advertised now, in case its address changed
+    // (a new DHCP lease) since it was paired.
+    let seen: HashMap<String, Vec<String>> = discovery
+        .machines()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|d| (d.machine_id, d.addrs))
+        .collect();
     static ETAGS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
-    let results: Vec<(String, Result<(), String>, HashMap<String, String>)> = std::thread::scope(|scope| {
+    type Outcome = (String, Result<Option<String>, String>, HashMap<String, String>);
+    let results: Vec<Outcome> = std::thread::scope(|scope| {
         let handles: Vec<_> = machines
             .iter()
             .map(|m| {
@@ -131,8 +143,9 @@ fn sync_all(links: &DirectLinks) {
                     .and_then(|e| e.clone())
                     .unwrap_or_default();
                 let cache = &cache;
+                let alternates = seen.get(&m.machine_id).cloned().unwrap_or_default();
                 scope.spawn(move || {
-                    let r = direct::sync(m, cache, &mut etags).map_err(|e| e.to_string());
+                    let r = direct::sync_any(m, &alternates, cache, &mut etags).map_err(|e| e.to_string());
                     (m.machine_id.clone(), r, etags)
                 })
             })
@@ -140,9 +153,24 @@ fn sync_all(links: &DirectLinks) {
         handles.into_iter().filter_map(|h| h.join().ok()).collect()
     });
     let mut merged = HashMap::new();
+    let mut moved: Vec<(String, String)> = Vec::new();
     for (id, r, etags) in results {
-        links.set(&id, r);
+        if let Ok(Some(addr)) = &r {
+            moved.push((id.clone(), addr.clone()));
+        }
+        links.set(&id, r.map(|_| ()));
         merged.extend(etags.into_iter().filter(|(k, _)| k.starts_with(&id)));
+    }
+    if !moved.is_empty() {
+        // Re-read, so a pairing saved meanwhile isn't lost.
+        let mut all = direct::paired_machines(&dir);
+        for m in &mut all {
+            if let Some((_, addr)) = moved.iter().find(|(id, _)| *id == m.machine_id) {
+                crate::elog!(info, "direct", "{} moved to {addr}", m.name);
+                m.addr = addr.clone();
+            }
+        }
+        let _ = direct::save_paired_machines(&dir, &all);
     }
     if let Ok(mut e) = ETAGS.lock() {
         *e = Some(merged);
