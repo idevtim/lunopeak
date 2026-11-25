@@ -338,14 +338,164 @@ pub fn redact_session(s: &mut Session) {
     s.first_prompt = None;
 }
 
+/// Mask secrets in everything a snapshot carries that can hold a command or
+/// URL. Runs whether or not prompts are shared: sharing prompts is a choice
+/// about conversation text, never about credentials.
+pub fn scrub_live_secrets(data: &mut LiveData) {
+    let scrub = |tool: &str, text: &mut String| {
+        if matches!(tool, "Bash" | "WebFetch") {
+            *text = scrub_command(text);
+        }
+    };
+    for e in &mut data.activity.feed {
+        scrub(&e.tool, &mut e.summary);
+    }
+    for st in &mut data.activity.sessions {
+        if let (Some(tool), Some(sum)) = (st.last_tool.clone(), st.last_summary.as_mut()) {
+            scrub(&tool, sum);
+        }
+        for a in &mut st.subagents {
+            if let (Some(tool), Some(sum)) = (a.last_tool.clone(), a.last_summary.as_mut()) {
+                scrub(&tool, sum);
+            }
+        }
+    }
+}
+
+/// [`scrub_live_secrets`] for a session's command counts, whose keys are
+/// each command's first word (which can be `API_KEY=…`).
+pub fn scrub_session_secrets(s: &mut Session) {
+    let mut cleaned = std::collections::BTreeMap::new();
+    for (cmd, n) in std::mem::take(&mut s.bash_commands) {
+        *cleaned.entry(scrub_command(&cmd)).or_insert(0) += n;
+    }
+    s.bash_commands = cleaned;
+}
+
+/// Names that mark the next word, or an `=value`, as a secret.
+const SECRET_WORDS: &[&str] = &[
+    "key", "token", "secret", "password", "passwd", "pass", "pwd", "auth", "credential", "credentials",
+    "apikey", "api-key", "api_key", "access-key", "private-key",
+];
+
+/// Prefixes of well-known credential formats.
+const SECRET_PREFIXES: &[&str] = &[
+    "sk-", "sk_", "pk_live_", "rk_live_", "ghp_", "gho_", "ghs_", "ghu_", "ghr_", "github_pat_", "glpat-",
+    "xoxb-", "xoxp-", "xoxa-", "xoxs-", "xapp-", "AKIA", "ASIA", "AIza", "hf_", "npm_", "pypi-", "dop_v1_",
+    "ya29.", "eyJ",
+];
+
+/// Mask credentials in a shell command or URL, keeping its shape: known key
+/// formats, values of secret-named variables and flags (`API_KEY=…`,
+/// `--token …`), the password in `-u user:pass`, the word after `Bearer`, passwords in URLs
+/// and secret-named query parameters, and long random-looking words.
+pub fn scrub_command(input: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut mask_next = false;
+    let mut after_user_flag = false;
+    for word in input.split_whitespace() {
+        if mask_next {
+            mask_next = false;
+            out.push("***".into());
+            continue;
+        }
+        // `curl -u user:pass`: keep the user, mask the password. (`-u` alone
+        // means other things elsewhere, like `git push -u origin`.)
+        if std::mem::take(&mut after_user_flag) {
+            if let Some((user, _)) = word.split_once(':') {
+                out.push(format!("{user}:***"));
+                continue;
+            }
+        }
+        let bare = word.trim_matches(|c| c == '"' || c == '\'');
+        let lower = bare.to_ascii_lowercase();
+        if lower == "-u" || lower == "--user" {
+            out.push(word.to_string());
+            after_user_flag = true;
+            continue;
+        }
+        // `--token value`, `Bearer value`.
+        let flag = lower.trim_start_matches('-');
+        if lower == "bearer" || (lower.starts_with('-') && !lower.contains('=') && is_secret_name(flag)) {
+            out.push(word.to_string());
+            mask_next = true;
+            continue;
+        }
+        // `NAME=value` and `--name=value`.
+        if let Some((name, value)) = bare.split_once('=') {
+            if !value.is_empty() && is_secret_name(name.trim_start_matches('-')) {
+                out.push(format!("{name}=***"));
+                continue;
+            }
+        }
+        out.push(scrub_word(word));
+    }
+    out.join(" ")
+}
+
+fn is_secret_name(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    SECRET_WORDS.iter().any(|w| {
+        n == *w
+            || n.ends_with(&format!("_{w}"))
+            || n.ends_with(&format!("-{w}"))
+            || n.starts_with(&format!("{w}_"))
+            || n.starts_with(&format!("{w}-"))
+    }) || n.contains("token")
+        || n.contains("secret")
+        || n.contains("password")
+        || n.contains("api_key")
+        || n.contains("apikey")
+}
+
+/// One word: a URL's password and secret query values, a known key format,
+/// or a long random-looking string.
+fn scrub_word(word: &str) -> String {
+    if let Some(rest) = word.split_once("://").map(|(_, r)| r) {
+        let mut w = word.to_string();
+        // https://user:pass@host → https://user:***@host
+        if let Some(at) = rest.find('@') {
+            let userinfo = &rest[..at];
+            if let Some((user, _)) = userinfo.split_once(':') {
+                w = w.replacen(userinfo, &format!("{user}:***"), 1);
+            }
+        }
+        if let Some((base, query)) = w.clone().split_once('?') {
+            let q: Vec<String> = query
+                .split('&')
+                .map(|kv| match kv.split_once('=') {
+                    Some((k, v)) if !v.is_empty() && is_secret_name(k) => format!("{k}=***"),
+                    _ => kv.to_string(),
+                })
+                .collect();
+            w = format!("{base}?{}", q.join("&"));
+        }
+        return w;
+    }
+    let bare = word.trim_matches(|c: char| c == '"' || c == '\'' || c == ',' || c == ';');
+    if SECRET_PREFIXES.iter().any(|p| bare.starts_with(p) && bare.len() > p.len() + 8) || looks_random(bare) {
+        return word.replace(bare, "***");
+    }
+    word.to_string()
+}
+
+/// 32+ characters of letters, digits and `-_+=`, mixing letters and digits,
+/// not plain hex (commit hashes) and not a path or a dotted name.
+fn looks_random(s: &str) -> bool {
+    s.len() >= 32
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '+' | '='))
+        && s.chars().any(|c| c.is_ascii_digit())
+        && s.chars().any(|c| c.is_ascii_alphabetic())
+        && !s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 /// The summary to publish for a call to `tool`, or `None` when the summary
 /// for that tool can be free text.
 fn redact_summary(tool: &str, summary: &str) -> Option<String> {
     match tool {
-        "Read" | "Edit" | "Write" | "NotebookEdit" | "Glob" | "Grep" | "Skill" | "WebFetch" => {
-            Some(summary.to_string())
-        }
-        "Bash" => Some(crate::logger::scrub_secrets(summary)),
+        "Read" | "Edit" | "Write" | "NotebookEdit" | "Glob" | "Grep" | "Skill" => Some(summary.to_string()),
+        "WebFetch" => Some(scrub_command(summary)),
+        "Bash" => Some(scrub_command(summary)),
         _ => None,
     }
 }
@@ -571,5 +721,44 @@ mod tests {
             ..Default::default()
         };
         assert_ne!(live_fingerprint(&a), live_fingerprint(&c));
+    }
+
+    #[test]
+    fn scrubs_credentials_from_commands_and_urls() {
+        let cases = [
+            ("OPENAI_API_KEY=sk-abc123def456ghi789 python app.py", "OPENAI_API_KEY=*** python app.py"),
+            ("gh auth login --with-token ghp_AbCdEf1234567890xyz", "gh auth login --with-token ***"),
+            ("curl -H 'Authorization: Bearer abc.def' https://x.io", "curl -H 'Authorization: Bearer *** https://x.io"),
+            ("curl -u tim:hunter2 https://x.io", "curl -u tim:*** https://x.io"),
+            ("git clone https://tim:s3cret@github.com/a/b", "git clone https://tim:***@github.com/a/b"),
+            ("open https://x.io/cb?code=1&access_token=zzz", "open https://x.io/cb?code=1&access_token=***"),
+            ("deploy --api-key=abcdef", "deploy --api-key=***"),
+            ("export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI", "export AWS_SECRET_ACCESS_KEY=***"),
+            ("echo AKIAIOSFODNN7EXAMPLE1", "echo ***"),
+            ("x qX7b9Lm2Pz8Rt4Vw6Yc1Nd3Fh5Jk0Ab9Cd", "x ***"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(scrub_command(input), want, "{input}");
+        }
+        // Ordinary commands survive, commit hashes and paths included.
+        for keep in [
+            "git checkout 3f2a9c1e5b7d4f6a8c0e2b4d6f8a0c2e4b6d8f0a",
+            "cargo test -p lunopeak-core --release",
+            "npm run build",
+            "cat /Users/tim/projects/really-long-folder-name-2026/src/main.rs",
+            "git push origin feat/remote-pairing",
+            "git push -u origin main",
+        ] {
+            assert_eq!(scrub_command(keep), keep);
+        }
+    }
+
+    #[test]
+    fn session_command_counts_are_scrubbed() {
+        let mut s = session();
+        s.bash_commands = BTreeMap::from([("TOKEN=abc123".to_string(), 2), ("git".to_string(), 5)]);
+        scrub_session_secrets(&mut s);
+        assert_eq!(s.bash_commands.get("TOKEN=***"), Some(&2));
+        assert_eq!(s.bash_commands.get("git"), Some(&5));
     }
 }

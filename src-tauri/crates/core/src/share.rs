@@ -87,6 +87,7 @@ pub fn collect_live(src: Sources, cfg: &ShareConfig) -> LiveData {
     if !cfg.share_prompts {
         node_wire::redact_live(&mut data);
     }
+    node_wire::scrub_live_secrets(&mut data);
     node_wire::stamp_live(&mut data, &cfg.name);
     data
 }
@@ -114,6 +115,7 @@ pub fn collect_sessions(src: Sources, cfg: &ShareConfig, caches: &Caches) -> Ses
             if !cfg.share_prompts {
                 node_wire::redact_session(&mut s);
             }
+            node_wire::scrub_session_secrets(&mut s);
             s.host = Some(cfg.name.clone());
             RemoteSession::new(agent, s)
         })

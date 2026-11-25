@@ -898,6 +898,7 @@ function OtherMachines({ s, update }: { s: Settings; update: Update }) {
 
 /** Letting LunoPeak on other computers show this one. */
 function ShareThisMachine({ s, update }: { s: Settings; update: Update }) {
+  const platform = usePlatform();
   const share = s.share;
   const qc = useQueryClient();
   const status = useQuery({ ...queries.shareStatus, refetchInterval: share.enabled ? 3_000 : false });
@@ -974,7 +975,11 @@ function ShareThisMachine({ s, update }: { s: Settings; update: Update }) {
     >
       <SettingRow
         label="Share this machine"
-        hint="Only computers you pair can see it, over an encrypted connection. Keeps running from the menu bar when the window is closed."
+        hint={
+          platform === "macos"
+            ? "Only computers you pair can see it, over an encrypted connection. Keeps sharing from the menu bar when the window is closed."
+            : "Only computers you pair can see it, over an encrypted connection. Keeps sharing with the window closed when Keep running when the window closes is on."
+        }
         keywords="share this machine pair remote other computers listen"
         control={
           <Switch

@@ -1,6 +1,6 @@
 [package]
 name = "lunopeak"
-version = "2.5.0"
+version = "2.6.0"
 description = "Your AI dev environment, at a glance."
 authors = ["iDEVTim"]
 license = "MIT"

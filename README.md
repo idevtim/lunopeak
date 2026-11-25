@@ -29,7 +29,7 @@ All builds auto-update except Linux RPM (manual). What changed in each version i
 See the agents, history and spend of your other computers next to this one's: a desktop and a laptop, a build server, a Windows PC. Machines connect directly over your network with an encrypted, paired connection. There's no account and nothing goes through a server.
 
 1. **On the machine to share:**
-   - **If it has LunoPeak:** turn on Settings → Share this machine.
+   - **If it has LunoPeak:** turn on Settings → Agents & projects → Share this machine.
    - **On a server or anything without the app:** paste one line in a terminal.
      - macOS or Linux:
        ```sh
@@ -40,14 +40,15 @@ See the agents, history and spend of your other computers next to this one's: a 
        irm https://github.com/idevtim/lunopeak/releases/latest/download/install-node.ps1 | iex
        ```
      This installs `lunopeak-node`, starts it at login, and shows a pairing code.
-2. **On your main machine:** go to Settings → Other machines → Add a machine. Pick the machine from the list, or type its address (a [Tailscale](https://tailscale.com) address works from anywhere), then enter the 6-digit code.
+2. **On your main machine:** go to Settings → Agents & projects → Other machines → Add a machine. Pick the machine from the list, or type its address (a [Tailscale](https://tailscale.com) address works from anywhere), then enter the 6-digit code.
 
 **What other machines see:**
-- **Your prompts stay on the machine they were typed on.** Other machines see files, commands, tools and spend, unless you turn on Share prompts.
+- **Your prompts stay on the machine they were typed on.** Other machines see project folders, files, commands, tools and spend, unless you turn on Share prompts.
+- **Keys and passwords in commands are masked.** This happens even when Share prompts is on.
 - **Replays stay local.** Transcripts never leave their machine, so replay only works there.
 - **Some things stay this machine only:** the menu bar, budget alerts and the terminal status line.
 
-**Using a sync tool instead:** machines can also share through a folder synced with Syncthing, iCloud Drive or a network share. Run `lunopeak-node --out <folder>` there and choose the folder under Settings → Other machines.
+**Using a sync tool instead:** machines can also share through a folder synced with Syncthing, iCloud Drive or a network share. Run `lunopeak-node --out <folder>` there and choose the folder under Settings → Agents & projects → Other machines.
 
 **Commands:** `lunopeak-node status`, `pair`, `hubs`, `unpair` and `uninstall` manage a node; `lunopeak-node --help` lists them all.
 
