@@ -685,6 +685,13 @@ pub struct RepoCost {
     pub sessions: u32,
     pub tokens: u64,
     pub messages: u64,
+    /// Other machines whose sessions are in this row, by label, sorted.
+    /// Rows group by project name, so one row can mix machines.
+    #[serde(default)]
+    pub hosts: Vec<String>,
+    /// Whether any of its sessions ran on this machine.
+    #[serde(default = "default_true")]
+    pub on_this_machine: bool,
 }
 
 /// Aggregate stats for a single bucket (day, 5h window, week, etc.) used

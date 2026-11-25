@@ -386,16 +386,34 @@ if $SIGNING_ENABLED && [ -n "$APPIMAGE_PATH" ]; then
   echo "✓ Updater payload: $UPDATER_PATH (+ .sig)"
 fi
 
+if grep -q $'\r' "$SCRIPT_DIR/install-node.sh"; then
+  echo "❌ scripts/install-node.sh has CRLF line endings; sh can't run it. Re-checkout with LF (see .gitattributes)."
+  exit 1
+fi
+
 # ─── lunopeak-node (shares a machine without the app) ───────────────────────
 # Shipped under a version-free name so installers can always fetch
 # releases/latest/download/lunopeak-node-linux-<arch>.tar.gz.
-echo "🔨 Building lunopeak-node for $RUST_TARGET..."
-cargo build --release -p lunopeak-node --target "$RUST_TARGET" \
+# Built static against musl, not glibc: a binary linked against the build
+# host's glibc (2.35 here) refuses to start on older systems, Debian 11 and
+# Proxmox 7 among them (glibc 2.31).
+NODE_TARGET="${RUST_ARCH}-unknown-linux-musl"
+if ! command -v musl-gcc >/dev/null 2>&1; then
+  echo "❌ musl-gcc not found. Install musl-tools (apt install musl-tools) for the static lunopeak-node build."
+  exit 1
+fi
+rustup target add "$NODE_TARGET" >/dev/null
+echo "🔨 Building lunopeak-node for $NODE_TARGET (static)..."
+cargo build --release -p lunopeak-node --target "$NODE_TARGET" \
   --manifest-path "$PROJECT_DIR/src-tauri/Cargo.toml"
 NODE_DIR="$BUNDLE_DIR/node"
 rm -rf "$NODE_DIR"
 mkdir -p "$NODE_DIR"
-cp "$PROJECT_DIR/src-tauri/target/$RUST_TARGET/release/lunopeak-node" "$NODE_DIR/"
+cp "$PROJECT_DIR/src-tauri/target/$NODE_TARGET/release/lunopeak-node" "$NODE_DIR/"
+if ldd "$NODE_DIR/lunopeak-node" 2>&1 | grep -q "libc.so"; then
+  echo "❌ lunopeak-node links glibc dynamically; it wouldn't run on older Linux."
+  exit 1
+fi
 NODE_TARGZ="$NODE_DIR/lunopeak-node-linux-${RUST_TARGET%%-*}.tar.gz"
 tar -czf "$NODE_TARGZ" -C "$NODE_DIR" lunopeak-node
 if [ "$("$NODE_DIR/lunopeak-node" --version)" != "lunopeak-node $VERSION" ]; then

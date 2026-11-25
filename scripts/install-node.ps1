@@ -21,7 +21,8 @@ try {
   $node = Join-Path $tmp 'lunopeak-node.exe'
 
   & $node install @args
-  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  # `return`, not `exit`: under `irm | iex` an exit closes the PowerShell window.
+  if ($LASTEXITCODE -ne 0) { Write-Host 'Install failed; see the message above.'; return }
 
   # First install (nothing paired yet): show a code right away.
   if ((& $node hubs) -match 'Not shared') {

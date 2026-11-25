@@ -145,6 +145,7 @@ fn status(state_dir: &Path) {
             (true, None) => "installed",
         }
     );
+    print_addresses("Addresses (if listening on the default port):");
     match node_wire::machine_id(state_dir) {
         Ok(id) => println!("Machine id: {id}"),
         Err(e) => println!("Machine id: unreadable ({e})"),
@@ -258,13 +259,14 @@ fn pair(state_dir: &Path) {
     let code = direct::open_pairing(state_dir)
         .unwrap_or_else(|e| fail(&format!("couldn't open pairing: {e}")));
     println!(
-        "Pairing code: {} {}\n\nIn LunoPeak on your other computer, open Settings → Other machines,\n\
-         pick this machine and enter the code. It works once, for {} minutes.\n\
-         `lunopeak-node --listen` must be running on this machine.",
+        "Pairing code: {} {}\n\nIn LunoPeak on your other computer, open Settings → Agents & projects →\n\
+         Other machines → Add a machine, pick this machine and enter the code.\n\
+         It works once, for {} minutes. `lunopeak-node --listen` must be running here.",
         &code[..3],
         &code[3..],
         direct::PAIR_WINDOW.as_secs() / 60
     );
+    print_addresses("If it isn't in the list, type");
     loop {
         std::thread::sleep(Duration::from_millis(500));
         let now = direct::paired_hubs(state_dir);
@@ -276,6 +278,19 @@ fn pair(state_dir: &Path) {
             println!("\nPairing closed (timed out or too many wrong codes). Run `lunopeak-node pair` again.");
             std::process::exit(1);
         }
+    }
+}
+
+/// This machine's likely addresses with the default port, for pairing by
+/// address when discovery can't see it.
+fn print_addresses(lead: &str) {
+    let addrs: Vec<String> = lunopeak_core::discovery::local_addresses()
+        .into_iter()
+        .take(3)
+        .map(|ip| SocketAddr::new(ip, direct::DEFAULT_PORT).to_string())
+        .collect();
+    if !addrs.is_empty() {
+        println!("{lead} {}", addrs.join(" or "));
     }
 }
 

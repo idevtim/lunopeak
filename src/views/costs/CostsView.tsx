@@ -1,3 +1,4 @@
+import { MachinePill } from "@/components/ui/MachinePill";
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Coins, Monitor, PiggyBank } from "lucide-react";
@@ -522,12 +523,28 @@ function ProjectsCard({ c, onOpenRepo }: { c: CostBreakdown; onOpenRepo?: (repo:
         {top.map((r) => (
           <MeterRow
             key={r.repoName}
-            label={<Mono className="text-[12.5px]">{r.repoName}</Mono>}
+            label={
+              <span className="flex min-w-0 items-center gap-1.5">
+                <Mono className="truncate text-[12.5px]">{r.repoName}</Mono>
+                {r.hosts.map((h) => (
+                  <MachinePill key={h} host={h} className="py-0 text-[10.5px]" />
+                ))}
+              </span>
+            }
             pct={(r.costUsd / max) * 100}
-            barClassName="bg-blue-500"
+            // Violet when all of it ran on other machines, like the By machine card.
+            barClassName={r.onThisMachine ? "bg-blue-500" : "bg-violet-500"}
             value={formatUsd(r.costUsd)}
             onClick={onOpenRepo && (() => onOpenRepo(r.repoName))}
-            title={`${plural(r.sessions, "session")} · ${formatCount(r.messages)} messages`}
+            title={[
+              `${plural(r.sessions, "session")} · ${formatCount(r.messages)} messages`,
+              r.hosts.length > 0 &&
+                (r.onThisMachine
+                  ? `Includes spend on ${r.hosts.join(", ")} as well as this machine`
+                  : `All of it on ${r.hosts.join(", ")}`),
+            ]
+              .filter(Boolean)
+              .join(". ")}
           />
         ))}
         {rest.length > 0 && (

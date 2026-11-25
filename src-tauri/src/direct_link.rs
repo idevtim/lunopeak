@@ -7,7 +7,7 @@
 //! Only the window process runs this: the menu bar never shows other machines.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -27,14 +27,26 @@ const POLL: Duration = Duration::from_secs(5);
 pub struct LinkStatus {
     /// Epoch ms of the last successful fetch.
     pub last_ok: Option<i64>,
-    /// Why the last fetch failed, in words for the user.
+    /// Why fetching keeps failing, in words for the user. Set only after
+    /// [`FAILURES_BEFORE_ERROR`] failures in a row: one slow answer (a
+    /// connect timeout on a busy network) right before a success shouldn't
+    /// flash a firewall warning.
     pub error: Option<String>,
+    #[serde(skip)]
+    failures: u32,
 }
+
+/// Consecutive failed fetches before Settings shows an error.
+const FAILURES_BEFORE_ERROR: u32 = 2;
 
 #[derive(Default)]
 struct Inner {
     status: HashMap<String, LinkStatus>,
     wake: bool,
+    /// Machines with a fetch in flight.
+    busy: std::collections::HashSet<String>,
+    /// Per machine, the ETag of each file last fetched.
+    etags: HashMap<String, HashMap<String, String>>,
 }
 
 /// Managed state: fetch status plus a way to wake the loop.
@@ -56,16 +68,39 @@ impl DirectLinks {
         }
     }
 
-    fn set(&self, id: &str, result: Result<(), String>) {
+    fn set(&self, id: &str, name: &str, result: Result<(), String>) {
         if let Ok(mut i) = self.inner.0.lock() {
             let s = i.status.entry(id.to_string()).or_default();
             match result {
                 Ok(()) => {
+                    // Log changes of state, not every poll, so a machine
+                    // that's off overnight leaves two lines, not thousands.
+                    if s.error.is_some() {
+                        crate::elog!(info, "direct", "{name}: connected again");
+                    }
                     s.last_ok = Some(now_ms());
                     s.error = None;
+                    s.failures = 0;
                 }
-                Err(e) => s.error = Some(e),
+                Err(e) => {
+                    s.failures += 1;
+                    if s.failures >= FAILURES_BEFORE_ERROR && s.error.as_ref() != Some(&e) {
+                        crate::elog!(warn, "direct", "{name}: {e}");
+                        s.error = Some(e);
+                    }
+                }
             }
+        }
+    }
+
+    /// Claim `id` for a fetch; false when one is already running for it.
+    fn start_fetch(&self, id: &str) -> bool {
+        self.inner.0.lock().is_ok_and(|mut i| i.busy.insert(id.to_string()))
+    }
+
+    fn end_fetch(&self, id: &str) {
+        if let Ok(mut i) = self.inner.0.lock() {
+            i.busy.remove(id);
         }
     }
 
@@ -111,8 +146,10 @@ pub fn start(app: AppHandle) {
         });
 }
 
-/// Fetch every paired machine at once, so one that's off (a 5s connect
-/// timeout) doesn't hold up the rest.
+/// Start a fetch for every paired machine that doesn't have one running.
+/// Each runs on its own thread and reports as soon as it's done, so a machine
+/// that's off (a 5s connect timeout per address tried) never delays the
+/// others' live data, and a reconnect clears its error right away.
 fn sync_all(links: &DirectLinks, discovery: &Discovery) {
     let (Some(dir), Some(cache)) = (app_dir(), cache_root()) else {
         return;
@@ -131,50 +168,45 @@ fn sync_all(links: &DirectLinks, discovery: &Discovery) {
         .into_iter()
         .map(|d| (d.machine_id, d.addrs))
         .collect();
-    static ETAGS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
-    type Outcome = (String, Result<Option<String>, String>, HashMap<String, String>);
-    let results: Vec<Outcome> = std::thread::scope(|scope| {
-        let handles: Vec<_> = machines
-            .iter()
-            .map(|m| {
-                let mut etags = ETAGS
-                    .lock()
-                    .ok()
-                    .and_then(|e| e.clone())
-                    .unwrap_or_default();
-                let cache = &cache;
-                let alternates = seen.get(&m.machine_id).cloned().unwrap_or_default();
-                scope.spawn(move || {
-                    let r = direct::sync_any(m, &alternates, cache, &mut etags).map_err(|e| e.to_string());
-                    (m.machine_id.clone(), r, etags)
-                })
-            })
-            .collect();
-        handles.into_iter().filter_map(|h| h.join().ok()).collect()
-    });
-    let mut merged = HashMap::new();
-    let mut moved: Vec<(String, String)> = Vec::new();
-    for (id, r, etags) in results {
-        if let Ok(Some(addr)) = &r {
-            moved.push((id.clone(), addr.clone()));
+    for m in machines {
+        if !links.start_fetch(&m.machine_id) {
+            continue;
         }
-        links.set(&id, r.map(|_| ()));
-        merged.extend(etags.into_iter().filter(|(k, _)| k.starts_with(&id)));
+        let alternates = seen.get(&m.machine_id).cloned().unwrap_or_default();
+        let (links, dir, cache) = (links.clone(), dir.clone(), cache.clone());
+        let _ = std::thread::Builder::new()
+            .name("lunopeak-direct-fetch".into())
+            .spawn(move || {
+                fetch_one(&links, &dir, &cache, &m, &alternates);
+                links.end_fetch(&m.machine_id);
+            });
     }
-    if !moved.is_empty() {
+}
+
+/// Fetch one machine now and record the result. Also used right after
+/// pairing, so the new machine shows up without waiting for the next poll.
+pub fn fetch_one(links: &DirectLinks, dir: &Path, cache: &Path, m: &PairedMachine, alternates: &[String]) {
+    let mut etags = links
+        .inner
+        .0
+        .lock()
+        .ok()
+        .and_then(|i| i.etags.get(&m.machine_id).cloned())
+        .unwrap_or_default();
+    let result = direct::sync_any(m, alternates, cache, &mut etags).map_err(|e| e.to_string());
+    if let Ok(mut i) = links.inner.0.lock() {
+        i.etags.insert(m.machine_id.clone(), etags);
+    }
+    if let Ok(Some(addr)) = &result {
         // Re-read, so a pairing saved meanwhile isn't lost.
-        let mut all = direct::paired_machines(&dir);
-        for m in &mut all {
-            if let Some((_, addr)) = moved.iter().find(|(id, _)| *id == m.machine_id) {
-                crate::elog!(info, "direct", "{} moved to {addr}", m.name);
-                m.addr = addr.clone();
-            }
+        let mut all = direct::paired_machines(dir);
+        if let Some(saved) = all.iter_mut().find(|x| x.machine_id == m.machine_id) {
+            crate::elog!(info, "direct", "{} moved to {addr}", m.name);
+            saved.addr = addr.clone();
+            let _ = direct::save_paired_machines(dir, &all);
         }
-        let _ = direct::save_paired_machines(&dir, &all);
     }
-    if let Ok(mut e) = ETAGS.lock() {
-        *e = Some(merged);
-    }
+    links.set(&m.machine_id, &m.name, result.map(|_| ()));
 }
 
 /// A machine that was unpaired shouldn't keep showing from old fetches.

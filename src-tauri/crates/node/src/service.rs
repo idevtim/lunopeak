@@ -3,14 +3,16 @@
 //!
 //! The binary is first copied into the state dir (`bin/`), so the service
 //! keeps working after the downloaded copy is deleted and a later `install`
-//! upgrades it in place. Then, per platform, as the current user (never
-//! root, since the node reads that user's agent folders):
+//! upgrades it in place. Then, per platform, as the current user, since the
+//! node reads that user's agent folders:
 //!
 //! - macOS: a LaunchAgent, `~/Library/LaunchAgents/com.lunopeak.node.plist`,
 //!   loaded with `launchctl bootstrap gui/<uid>`.
 //! - Linux: a systemd user unit, `~/.config/systemd/user/lunopeak-node.service`,
 //!   enabled with `systemctl --user enable --now`. A server with nobody logged
-//!   in also needs `loginctl enable-linger`, which `install` suggests.
+//!   in also needs `loginctl enable-linger`, which `install` suggests. As root
+//!   (a Proxmox host or container), a system unit in `/etc/systemd/system`
+//!   instead, since root shells there often have no user service manager.
 //! - Windows: a Task Scheduler task at logon, run through
 //!   `conhost.exe --headless` so no console window opens.
 
@@ -209,11 +211,37 @@ mod platform {
 mod platform {
     use super::*;
 
+    extern "C" {
+        #[link_name = "getuid"]
+        fn libc_getuid() -> u32;
+    }
+
+    /// Root gets a system service (Proxmox hosts and containers usually log
+    /// in as root, often without a user service manager); anyone else gets a
+    /// user service, which runs with their own agent folders.
+    fn is_root() -> bool {
+        // SAFETY: getuid has no preconditions and can't fail.
+        unsafe { libc_getuid() == 0 }
+    }
+
     fn unit_path() -> Result<PathBuf, String> {
+        if is_root() {
+            return Ok(PathBuf::from("/etc/systemd/system").join(UNIT));
+        }
         Ok(dirs::config_dir()
             .ok_or("no config folder")?
             .join("systemd/user")
             .join(UNIT))
+    }
+
+    /// `systemctl` for this install: `--user` unless root.
+    fn systemctl(args: &[&str]) -> Result<String, String> {
+        let mut all: Vec<&str> = Vec::new();
+        if !is_root() {
+            all.push("--user");
+        }
+        all.extend_from_slice(args);
+        run("systemctl", &all)
     }
 
     /// systemd's quoting: wrap in double quotes, escape `\`, `"`, `%`, `$`.
@@ -227,22 +255,51 @@ mod platform {
     }
 
     pub fn install(exe: &Path, args: &[String], _logs: &Path) -> Result<Vec<String>, String> {
+        if !Path::new("/run/systemd/system").exists() {
+            return Err(
+                "this system doesn't run systemd, so install can't keep the node running. \
+                 Start `lunopeak-node --listen` from your own service manager or a startup script instead."
+                    .into(),
+            );
+        }
+        let root = is_root();
         let mut cmd = vec![quote(&exe.display().to_string())];
         cmd.extend(args.iter().map(|a| quote(a)));
+        // A system service gets no HOME, and the node finds the agents'
+        // folders through it.
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
         let unit = format!(
-            "[Unit]\nDescription=LunoPeak node: shares this machine's coding sessions\nAfter=network-online.target\n\n\
-             [Service]\nExecStart={}\nRestart=on-failure\nRestartSec=10\n\n\
-             [Install]\nWantedBy=default.target\n",
-            cmd.join(" ")
+            "[Unit]\nDescription=LunoPeak node: shares this machine's coding sessions\n\
+             After=network-online.target\nWants=network-online.target\n\n\
+             [Service]\nExecStart={exec}\n{env}Restart=on-failure\nRestartSec=10\n\n\
+             [Install]\nWantedBy={target}\n",
+            exec = cmd.join(" "),
+            env = if root { format!("Environment={}\n", quote(&format!("HOME={home}"))) } else { String::new() },
+            target = if root { "multi-user.target" } else { "default.target" },
         );
         let path = unit_path()?;
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
         std::fs::write(&path, unit).map_err(|e| format!("can't write {}: {e}", path.display()))?;
-        run("systemctl", &["--user", "daemon-reload"])?;
-        run("systemctl", &["--user", "enable", UNIT])?;
-        run("systemctl", &["--user", "restart", UNIT])?;
+        let no_bus = |e: String| {
+            if !root && (e.contains("bus") || e.contains("XDG_RUNTIME_DIR")) {
+                format!(
+                    "{e}\nThis login has no user service manager (common under `su` or `pct enter`). \
+                     Log in directly over SSH as this user and run install again."
+                )
+            } else {
+                e
+            }
+        };
+        systemctl(&["daemon-reload"]).map_err(no_bus)?;
+        systemctl(&["enable", UNIT]).map_err(no_bus)?;
+        systemctl(&["restart", UNIT]).map_err(no_bus)?;
+        if root {
+            return Ok(vec![format!(
+                "Runs as a system service ({UNIT}), started at boot. Logs: journalctl -u {UNIT}"
+            )]);
+        }
         let mut notes = vec![format!("Runs as a systemd user service ({UNIT}). Logs: journalctl --user -u {UNIT}")];
         let user = std::env::var("USER").unwrap_or_default();
         let lingering = run("loginctl", &["show-user", &user, "--property=Linger"])
@@ -256,18 +313,18 @@ mod platform {
     }
 
     pub fn uninstall() -> Result<(), String> {
-        let _ = run("systemctl", &["--user", "disable", "--now", UNIT]);
+        let _ = systemctl(&["disable", "--now", UNIT]);
         let path = unit_path()?;
         if path.exists() {
             std::fs::remove_file(&path).map_err(|e| e.to_string())?;
         }
-        let _ = run("systemctl", &["--user", "daemon-reload"]);
+        let _ = systemctl(&["daemon-reload"]);
         Ok(())
     }
 
     pub fn status() -> (bool, Option<bool>) {
         let installed = unit_path().is_ok_and(|p| p.exists());
-        let running = run("systemctl", &["--user", "is-active", UNIT])
+        let running = systemctl(&["is-active", UNIT])
             .map(|o| o.trim() == "active")
             .unwrap_or(false);
         (installed, installed.then_some(running))

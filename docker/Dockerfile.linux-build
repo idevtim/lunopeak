@@ -32,6 +32,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV APPIMAGE_EXTRACT_AND_RUN=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+      # musl-gcc, for the static lunopeak-node build (runs on any glibc)
+      musl-tools \
       # Tauri 2 webview + GTK stack
       libwebkit2gtk-4.1-dev \
       libsoup-3.0-dev \
@@ -81,6 +83,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --profile minimal --default-toolchain stable
 ENV PATH="/root/.cargo/bin:${PATH}"
+RUN rustup target add x86_64-unknown-linux-musl
 
 # ─── AppImage marker workaround ─────────────────────────────────────────────
 # A type-2 AppImage stamps "AI\x02" into the ELF header padding at offset 8.

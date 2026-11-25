@@ -270,6 +270,11 @@ spctl --assess --type execute --verbose "$APP_PATH" 2>&1 | tail -5 || {
   echo "⚠️  spctl assessment failed; the app may still work but Gatekeeper will warn."
 }
 
+if grep -q $'\r' "$SCRIPT_DIR/install-node.sh"; then
+  echo "❌ scripts/install-node.sh has CRLF line endings; sh can't run it. Re-checkout with LF (see .gitattributes)."
+  exit 1
+fi
+
 # ─── lunopeak-node (shares a machine without the app) ───────────────────────
 # A plain CLI, so it isn't stapled (only bundles take a ticket); it's signed
 # with the hardened runtime and notarized, and Gatekeeper finds the ticket

@@ -1221,11 +1221,21 @@ pub fn costs(sessions: &[Session]) -> CostBreakdown {
             sessions: 0,
             tokens: 0,
             messages: 0,
+            hosts: Vec::new(),
+            on_this_machine: false,
         });
         r.cost_usd += s.cost_usd;
         r.sessions += 1;
         r.tokens += session_tokens;
         r.messages += s.message_count as u64;
+        match &s.host {
+            Some(h) if !r.hosts.contains(h) => r.hosts.push(h.clone()),
+            Some(_) => {}
+            None => r.on_this_machine = true,
+        }
+    }
+    for r in by_repo.values_mut() {
+        r.hosts.sort();
     }
 
     let mut by_model: Vec<ModelUsage> = by_model.into_values().collect();

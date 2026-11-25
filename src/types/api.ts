@@ -177,6 +177,8 @@ export interface ShareStatus {
   name: string | null;
   port: number | null;
   discoverable: boolean;
+  /** `ip:port` other computers can type to reach this one, most likely first. */
+  addrs: string[];
   error: string | null;
   updatedAt: number;
 }
@@ -447,6 +449,11 @@ export interface RepoCost {
   sessions: number;
   tokens: number;
   messages: number;
+  /** Other machines whose sessions are in this row (rows group by project
+   *  name, so one row can mix machines). Empty for this machine only. */
+  hosts: string[];
+  /** Whether any of its sessions ran on this machine. */
+  onThisMachine: boolean;
 }
 
 export interface CostBreakdown {

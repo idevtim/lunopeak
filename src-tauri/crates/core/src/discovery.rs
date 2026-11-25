@@ -30,6 +30,13 @@ impl Drop for Advertiser {
     }
 }
 
+/// This machine's addresses another computer could use to reach it, most
+/// likely first (the same ranking discovery uses).
+pub fn local_addresses() -> Vec<IpAddr> {
+    let addrs = if_addrs::get_if_addrs().unwrap_or_default();
+    rank_addresses(addrs.into_iter().map(|i| i.ip()))
+}
+
 /// Advertise this machine on `port` under every local address.
 pub fn advertise(machine_id: &str, name: &str, port: u16) -> Result<Advertiser, String> {
     let daemon = ServiceDaemon::new().map_err(|e| e.to_string())?;
@@ -147,7 +154,7 @@ fn from_info(info: &ServiceInfo) -> Option<Discovered> {
 /// (192.168/16), then other private ranges (10/8, then 172.16/12, where
 /// Docker and VM adapters usually live), then any other IPv4, then global
 /// IPv6. Loopback and link-local addresses are dropped.
-fn rank_addresses(addrs: impl Iterator<Item = IpAddr>) -> Vec<IpAddr> {
+pub fn rank_addresses(addrs: impl Iterator<Item = IpAddr>) -> Vec<IpAddr> {
     let rank = |a: &IpAddr| -> Option<u8> {
         if a.is_loopback() || a.is_unspecified() {
             return None;
