@@ -52,6 +52,7 @@ import { Button } from "@/components/ui/Button";
 import { Switch } from "@/components/ui/Switch";
 import { ProviderIcon } from "@/components/ui/ProviderIcon";
 import { cn, openExternal } from "@/lib/utils";
+import { formatRelativeTime } from "@/lib/format";
 import { filterEditorsForPlatform } from "@/lib/editors";
 import { checkForUpdates, RELEASES_URL } from "@/lib/updates";
 import { toast } from "@/stores/toastStore";
@@ -60,6 +61,9 @@ import { sections } from "@/routes";
 import type {
   AssistantProvider,
   Settings,
+  MachineProbe,
+  PairedMachine,
+  ShareHub,
   SidebarPlanUsage,
   TrayHeadlineWindow,
   TrayPinnedProvider,
@@ -195,6 +199,11 @@ export function SettingsView() {
     onSettled: (_data, _err, next, ctx) => {
       qc.invalidateQueries({ queryKey: queries.settings.queryKey });
       qc.invalidateQueries({ queryKey: queries.repos.queryKey });
+      // Cheap to refetch (cached by mtime on the Rust side), and the folder
+      // or the on/off switch may have changed.
+      for (const q of [queries.remoteNodes, queries.pairedMachines, queries.remoteLive, queries.remoteSessions, queries.machineCosts]) {
+        qc.invalidateQueries({ queryKey: q.queryKey });
+      }
 
       const prevAgents = ctx?.prev?.agents;
       const nextAgents = next.agents;
@@ -709,7 +718,559 @@ function AgentsCategory({ s, update, platform }: { s: Settings; update: Update; 
           <Button onClick={() => void addFolder()}>Add folder…</Button>
         </SettingBlock>
       </SettingsSection>
+
+      <OtherMachines s={s} update={update} />
+      <ShareThisMachine s={s} update={update} />
     </>
+  );
+}
+
+/** Other computers' sessions: paired directly, or read from a synced folder. */
+function OtherMachines({ s, update }: { s: Settings; update: Update }) {
+  const r = s.remote;
+  const qc = useQueryClient();
+  const nodes = useQuery({ ...queries.remoteNodes, enabled: r.enabled, refetchInterval: 5_000 });
+  const paired = useQuery({ ...queries.pairedMachines, enabled: r.enabled, refetchInterval: 5_000 });
+  const setRemote = (patch: Partial<Settings["remote"]>) =>
+    update((cur) => ({ ...cur, remote: { ...cur.remote, ...patch } }));
+
+  const chooseFolder = async () => {
+    if (!isTauri()) {
+      toast.info("Choosing a folder needs the desktop app");
+      return;
+    }
+    const selected = await open({ directory: true, multiple: false });
+    if (typeof selected === "string") setRemote({ folder: selected, enabled: true });
+  };
+
+  const refresh = () => {
+    for (const q of [queries.pairedMachines, queries.remoteNodes, queries.remoteLive, queries.remoteSessions, queries.machineCosts]) {
+      void qc.invalidateQueries({ queryKey: q.queryKey });
+    }
+  };
+  const unpair = async (m: PairedMachine) => {
+    try {
+      await api.unpairMachine(m.machineId);
+      toast.success(`Removed ${m.name}`);
+    } catch (e) {
+      toast.error(`Couldn't remove ${m.name}: ${String(e)}`);
+    }
+    refresh();
+  };
+
+  // One row per machine, whether it's paired, in the folder, or both.
+  const pairedList = paired.data ?? [];
+  const nodeList = nodes.data ?? [];
+  const ids = [...new Set([...pairedList.map((p) => p.machineId), ...nodeList.map((n) => n.machineId)])];
+  const rows = ids
+    .map((id) => ({
+      id,
+      link: pairedList.find((p) => p.machineId === id),
+      node: nodeList.find((n) => n.machineId === id),
+    }))
+    .sort((a, b) => (a.node?.host ?? a.link?.name ?? "").localeCompare(b.node?.host ?? b.link?.name ?? ""));
+  const loading = nodes.isLoading || paired.isLoading;
+  const folderCheck = useQuery({
+    queryKey: ["shared-folder-check", r.folder] as const,
+    queryFn: () => api.checkSharedFolder(r.folder ?? ""),
+    enabled: r.enabled && !!r.folder,
+    refetchInterval: 10_000,
+  });
+  const folderNote = !r.folder || !folderCheck.data
+    ? null
+    : !folderCheck.data.exists
+      ? "Can't find this folder. If it's on an external drive or a network share, connect it; if it moved, choose it again."
+      : folderCheck.data.machines === 0
+        ? "Nothing here yet: no machine has written to this folder. Check the sync tool has finished, or point lunopeak-node --out here."
+        : null;
+
+  return (
+    <SettingsSection
+      title="Other machines"
+      caption="See sessions from your other computers. Pair them over your network, or read a folder you sync with Syncthing, iCloud Drive or a network share."
+    >
+      <SettingRow
+        label="Show other machines"
+        hint="Adds their running agents to Live, their history to Sessions and their spend to Costs. The menu bar and budget alerts stay this machine only."
+        keywords="remote machines node sync other computers hosts pair"
+        control={
+          <Switch
+            checked={r.enabled}
+            onChange={(v) => setRemote({ enabled: v })}
+            ariaLabel="Show other machines"
+          />
+        }
+      />
+      {r.enabled && (
+        <SettingBlock keywords="remote machines node hosts online paired" className="py-2.5">
+          {loading ? (
+            <Bone className="h-4 w-48" />
+          ) : rows.length === 0 ? (
+            <p className="m-0 text-[13px] text-zinc-500 dark:text-zinc-400">
+              No other machines yet. Add one below.
+            </p>
+          ) : (
+            <ul className="m-0 flex list-none flex-col gap-2.5 p-0">
+              {rows.map(({ id, link, node }) => {
+                const name = node?.host ?? link?.name ?? "Unnamed machine";
+                const problem = link?.error ?? node?.problem;
+                return (
+                  <li key={id} className="flex items-start justify-between gap-3">
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span className="flex flex-wrap items-center gap-2 text-[13px] text-zinc-900 dark:text-zinc-100">
+                        <span className="font-mono">{name}</span>
+                        {node?.online ? (
+                          <Pill tone="green">Online</Pill>
+                        ) : link?.error ? (
+                          <Pill tone="rose">Can't connect</Pill>
+                        ) : link && !node ? (
+                          <Pill>Connecting</Pill>
+                        ) : (
+                          <Pill>Offline</Pill>
+                        )}
+                        {node?.includesPrompts && <Pill tone="amber">Shares prompts</Pill>}
+                      </span>
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                        {[
+                          link ? `Paired · ${link.addr}` : "Shared folder",
+                          node?.os,
+                          node?.nodeVersion && `LunoPeak ${node.nodeVersion}`,
+                          node && `${node.sessions.toLocaleString()} sessions`,
+                          node?.lastSeen != null && `seen ${formatRelativeTime(node.lastSeen)}`,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                      {problem && (
+                        <span className="text-xs text-rose-600 dark:text-rose-400">{problem}</span>
+                      )}
+                    </span>
+                    {link && (
+                      <Button variant="ghost" onClick={() => void unpair(link)}>
+                        Remove
+                      </Button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </SettingBlock>
+      )}
+      {r.enabled && <AddMachine paired={pairedList} onPaired={refresh} />}
+      <SettingRow
+        label="Shared folder"
+        hint={
+          r.folder ? (
+            <span className="flex flex-col gap-0.5">
+              <span className="font-mono text-[11.5px]">{r.folder}</span>
+              {r.enabled && folderNote && (
+                <span
+                  className={cn(
+                    "text-xs",
+                    folderCheck.data?.exists ? "text-zinc-500 dark:text-zinc-400" : "text-rose-600 dark:text-rose-400",
+                  )}
+                >
+                  {folderNote}
+                </span>
+              )}
+            </span>
+          ) : (
+            "Optional. Machines that can't reach this one directly can write here with lunopeak-node --out."
+          )
+        }
+        keywords="remote shared folder sync node out syncthing icloud"
+        dimmed={!r.enabled}
+        control={
+          <span className="flex gap-2">
+            {r.folder && (
+              <Button variant="ghost" onClick={() => setRemote({ folder: null })}>
+                Clear
+              </Button>
+            )}
+            <Button onClick={() => void chooseFolder()}>{r.folder ? "Change…" : "Choose…"}</Button>
+          </span>
+        }
+      />
+    </SettingsSection>
+  );
+}
+
+/** Letting LunoPeak on other computers show this one. */
+function ShareThisMachine({ s, update }: { s: Settings; update: Update }) {
+  const platform = usePlatform();
+  const share = s.share;
+  const qc = useQueryClient();
+  const status = useQuery({ ...queries.shareStatus, refetchInterval: share.enabled ? 3_000 : false });
+  const hubs = useQuery({ ...queries.shareHubs, enabled: share.enabled, refetchInterval: 3_000 });
+  const [code, setCode] = useState<{ code: string; expires: number; before: string[] } | null>(null);
+  const [name, setName] = useState(share.name ?? "");
+  useEffect(() => setName(share.name ?? ""), [share.name]);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!code) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [code]);
+
+  const setShare = (patch: Partial<Settings["share"]>) =>
+    update((cur) => ({ ...cur, share: { ...cur.share, ...patch } }));
+  const st = status.data;
+  const hubList = hubs.data ?? [];
+
+  // A new app showed up while the code was on screen: pairing worked.
+  useEffect(() => {
+    if (!code) return;
+    const fresh = hubList.find((h) => !code.before.includes(h.hubId));
+    if (fresh) {
+      toast.success(`Paired with ${fresh.hubName}`);
+      setCode(null);
+    } else if (now > code.expires) {
+      setCode(null);
+    }
+  }, [hubList, code, now]);
+
+  const startPairing = async () => {
+    if (!isTauri()) {
+      toast.info("Pairing needs the desktop app");
+      return;
+    }
+    try {
+      const c = await api.openSharePairing();
+      setNow(Date.now());
+      setCode({ code: c, expires: Date.now() + 10 * 60_000, before: hubList.map((h) => h.hubId) });
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+  const cancelPairing = async () => {
+    setCode(null);
+    if (isTauri()) await api.closeSharePairing().catch(() => {});
+  };
+  const remove = async (h: ShareHub) => {
+    try {
+      await api.removeShareHub(h.hubId);
+      toast.success(`${h.hubName} can no longer see this machine`);
+    } catch (e) {
+      toast.error(String(e));
+    }
+    void qc.invalidateQueries({ queryKey: queries.shareHubs.queryKey });
+  };
+
+  const left = code ? Math.max(0, Math.round((code.expires - now) / 1000)) : 0;
+  const statusText = !share.enabled
+    ? null
+    : st?.error
+      ? null
+      : st?.running
+        ? `Sharing as ${st.name ?? "this machine"} on port ${st.port ?? "?"}${st.discoverable ? ", visible on this network" : ", not visible on this network (pair it by address)"}.`
+        : st && st.updatedAt > 0
+          ? "Sharing stopped responding. Quit LunoPeak from the menu bar and open it again."
+          : "Starting…";
+
+  return (
+    <SettingsSection
+      title="Share this machine"
+      caption="Let LunoPeak on your other computers show this one's agents, history and spend."
+    >
+      <SettingRow
+        label="Share this machine"
+        hint={
+          platform === "macos"
+            ? "Only computers you pair can see it, over an encrypted connection. Keeps sharing from the menu bar when the window is closed."
+            : "Only computers you pair can see it, over an encrypted connection. Keeps sharing with the window closed when Keep running when the window closes is on."
+        }
+        keywords="share this machine pair remote other computers listen"
+        control={
+          <Switch
+            checked={share.enabled}
+            onChange={(v) => setShare({ enabled: v })}
+            ariaLabel="Share this machine"
+          />
+        }
+        below={
+          share.enabled && (statusText || st?.error) ? (
+            <span
+              className={cn(
+                "text-xs",
+                st?.error ? "text-rose-600 dark:text-rose-400" : "text-zinc-500 dark:text-zinc-400",
+              )}
+            >
+              {st?.error ?? statusText}
+            </span>
+          ) : undefined
+        }
+      />
+      <SettingRow
+        label="Name"
+        hint="What your other computers call this one."
+        keywords="share machine name"
+        dimmed={!share.enabled}
+        control={
+          <span className={cn(fieldClass, "w-[200px]")}>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={() => {
+                const next = name.trim() || null;
+                if (next !== share.name) setShare({ name: next });
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              }}
+              placeholder={st?.name ?? "This computer's name"}
+              maxLength={40}
+              aria-label="Machine name"
+              className="min-w-0 flex-1 bg-transparent text-[13px] text-zinc-900 outline-none dark:text-zinc-100"
+            />
+          </span>
+        }
+      />
+      <SettingRow
+        label="Share prompts"
+        hint="Also send what you typed to the agents and their chat replies. Off by default: other computers see files, commands and spend, not your prompts."
+        keywords="share prompts chat text privacy"
+        dimmed={!share.enabled}
+        control={
+          <Switch
+            checked={share.sharePrompts}
+            onChange={(v) => setShare({ sharePrompts: v })}
+            ariaLabel="Share prompts"
+          />
+        }
+      />
+      {share.enabled && (
+        <SettingBlock keywords="pair computer code share hubs" className="flex flex-col gap-2.5">
+          {code ? (
+            <div className="flex flex-col gap-1.5">
+              <span className="font-mono text-[22px] tracking-[0.2em] tabular-nums text-zinc-900 dark:text-zinc-100">
+                {code.code.slice(0, 3)} {code.code.slice(3)}
+              </span>
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                On your other computer, open Settings → Other machines, pick{" "}
+                <span className="font-mono">{st?.name ?? "this machine"}</span> and enter this code. Works once, for{" "}
+                {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}.
+              </span>
+              <span>
+                <Button variant="ghost" onClick={() => void cancelPairing()}>
+                  Cancel
+                </Button>
+              </span>
+            </div>
+          ) : (
+            <span className="flex items-center justify-between gap-3">
+              <span className="text-[13px] text-zinc-900 dark:text-zinc-100">
+                {hubList.length === 0 ? "No computers paired yet" : "Computers that can see this one"}
+              </span>
+              <Button disabled={!st?.running} onClick={() => void startPairing()}>
+                Pair a computer…
+              </Button>
+            </span>
+          )}
+          {hubList.length > 0 && (
+            <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+              {hubList.map((h) => (
+                <li key={h.hubId} className="flex items-center justify-between gap-3">
+                  <span className="text-[13px] text-zinc-900 dark:text-zinc-100">
+                    <span className="font-mono">{h.hubName}</span>
+                    <span className="ml-2 text-xs text-zinc-500 dark:text-zinc-400">
+                      paired {formatRelativeTime(h.pairedAt)}
+                    </span>
+                  </span>
+                  <Button variant="ghost" onClick={() => void remove(h)}>
+                    Remove
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SettingBlock>
+      )}
+    </SettingsSection>
+  );
+}
+
+const NODE_INSTALL_UNIX =
+  "curl -fsSL https://github.com/idevtim/lunopeak/releases/latest/download/install-node.sh | sh";
+const NODE_INSTALL_WINDOWS =
+  "irm https://github.com/idevtim/lunopeak/releases/latest/download/install-node.ps1 | iex";
+
+/** A one-line installer with a copy button. */
+function InstallLine({ label, command }: { label: string; command: string }) {
+  return (
+    <span className="flex flex-col gap-1">
+      <span className="text-[11.5px] text-zinc-500 dark:text-zinc-400">{label}</span>
+      <span className="flex items-center gap-2">
+        <code className="min-w-0 flex-1 truncate rounded-md bg-black/[0.04] px-2 py-1 font-mono text-[11.5px] text-zinc-800 dark:bg-white/[0.06] dark:text-zinc-200">
+          {command}
+        </code>
+        <Button
+          variant="ghost"
+          onClick={() =>
+            void navigator.clipboard
+              ?.writeText(command)
+              .then(() => toast.success("Copied"))
+              .catch(() => toast.error("Couldn't copy"))
+          }
+        >
+          Copy
+        </Button>
+      </span>
+    </span>
+  );
+}
+
+/** Find a machine by address, then pair with the code it shows. */
+function AddMachine({ paired, onPaired }: { paired: PairedMachine[]; onPaired: () => void }) {
+  const found = useQuery({ ...queries.discoveredMachines, refetchInterval: 3_000 });
+  const nearby = (found.data ?? []).filter((d) => !paired.some((p) => p.machineId === d.machineId));
+  const [addr, setAddr] = useState("");
+  const [code, setCode] = useState("");
+  const [probe, setProbe] = useState<MachineProbe | null>(null);
+  const [busy, setBusy] = useState<"find" | "pair" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  /** Ask each address in turn; the first that answers wins. */
+  const find = async (targets: string[] = [addr]) => {
+    if (!isTauri()) {
+      toast.info("Pairing needs the desktop app");
+      return;
+    }
+    setBusy("find");
+    setError(null);
+    setProbe(null);
+    let lastError: string | null = null;
+    for (const target of targets) {
+      try {
+        const p = await api.probeMachine(target);
+        setAddr(p.addr);
+        if (p.isSelf) setError("That's this machine.");
+        else setProbe(p);
+        lastError = null;
+        break;
+      } catch (e) {
+        lastError = String(e);
+      }
+    }
+    if (lastError) setError(lastError);
+    setBusy(null);
+  };
+
+  const pair = async () => {
+    if (!probe) return;
+    setBusy("pair");
+    setError(null);
+    try {
+      const name = await api.pairMachine(probe.addr, code);
+      toast.success(`Paired with ${name}`);
+      setAddr("");
+      setCode("");
+      setProbe(null);
+      onPaired();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <SettingBlock keywords="add pair machine address code listen node" className="flex flex-col gap-2.5">
+      <span className="text-[13px] font-medium text-zinc-900 dark:text-zinc-100">Add a machine</span>
+      <p className="m-0 text-xs text-zinc-500 dark:text-zinc-400">
+        If it has LunoPeak, turn on Share this machine there. Otherwise (a server, say), paste one line in its
+        terminal: it installs the sharer, keeps it running and shows a pairing code. Then pick the machine below,
+        or enter its address (a Tailscale address works too).
+      </p>
+      <InstallLine label="Mac or Linux" command={NODE_INSTALL_UNIX} />
+      <InstallLine label="Windows (PowerShell)" command={NODE_INSTALL_WINDOWS} />
+      {nearby.length > 0 ? (
+        <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
+          {nearby.map((d) => (
+            <li key={d.machineId}>
+              <Button
+                disabled={busy !== null}
+                onClick={() => void find(d.addrs)}
+              >
+                <span className="font-mono">{d.name}</span>
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">
+          {found.isError ? "Couldn't look for machines on this network." : "Looking for machines on this network…"}
+        </span>
+      )}
+      <form
+        className="flex flex-wrap items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void find();
+        }}
+      >
+        <span className={cn(fieldClass, "w-[260px]")}>
+          <input
+            value={addr}
+            onChange={(e) => {
+              setAddr(e.target.value);
+              setProbe(null);
+            }}
+            placeholder="192.168.1.20 or build-box.local"
+            spellCheck={false}
+            autoCapitalize="off"
+            aria-label="Machine address"
+            className="min-w-0 flex-1 bg-transparent font-mono text-[12.5px] text-zinc-900 outline-none dark:text-zinc-100"
+          />
+        </span>
+        <Button type="submit" disabled={!addr.trim() || busy !== null}>
+          {busy === "find" ? "Looking…" : "Find"}
+        </Button>
+      </form>
+      {probe && (
+        <form
+          className="flex flex-col gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void pair();
+          }}
+        >
+          <span className="text-xs text-zinc-600 dark:text-zinc-300">
+            Found <span className="font-mono">{probe.name}</span> (LunoPeak {probe.version})
+            {probe.alreadyPaired && ", already paired. Pairing again replaces it."}
+            {probe.problem && (
+              <span className="block text-rose-600 dark:text-rose-400">{probe.problem}</span>
+            )}
+            {!probe.pairingOpen && (
+              <>
+                . Run <code className="font-mono text-[11.5px]">lunopeak-node pair</code> there to get a code.
+              </>
+            )}
+          </span>
+          <span className="flex items-center gap-2">
+            <span className={cn(fieldClass, "w-[120px]")}>
+              <input
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/[^0-9 ]/g, "").slice(0, 7))}
+                placeholder="123 456"
+                inputMode="numeric"
+                autoFocus
+                aria-label="Pairing code"
+                className="min-w-0 flex-1 bg-transparent font-mono text-[13px] tracking-wider tabular-nums text-zinc-900 outline-none dark:text-zinc-100"
+              />
+            </span>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={code.replace(/\D/g, "").length !== 6 || busy !== null || !!probe.problem}
+            >
+              {busy === "pair" ? "Pairing…" : "Pair"}
+            </Button>
+          </span>
+        </form>
+      )}
+      {error && <span className="text-xs text-rose-600 dark:text-rose-400">{error}</span>}
+    </SettingBlock>
   );
 }
 

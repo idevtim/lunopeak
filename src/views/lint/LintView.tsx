@@ -14,7 +14,7 @@ import { ClaudeOnlyEmpty } from "@/views/_shared/ClaudeOnlyEmpty";
 import { toast } from "@/stores/toastStore";
 import type { ClaudeMdLintReport, LintIssue } from "@/types/api";
 
-// Mirrors MAX_LINES / MAX_BYTES in src-tauri/src/scanners/health.rs.
+// Mirrors MAX_LINES / MAX_BYTES in src-tauri/crates/core/src/scanners/health.rs.
 const MAX_LINES = 200;
 const MAX_BYTES = 10_000;
 

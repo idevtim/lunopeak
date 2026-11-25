@@ -1,4 +1,4 @@
-// Frontend mirror of Rust models in src-tauri/src/models.rs
+// Frontend mirror of Rust models in src-tauri/crates/core/src/models.rs
 
 export interface Repo {
   id: string;
@@ -152,6 +152,127 @@ export interface Settings {
   editor: EditorPrefs;
   /** What the Claude Code terminal status line shows. */
   statusline: StatuslinePrefs;
+  /** Other machines' sessions, published by `lunopeak-node`. */
+  remote: RemoteHubPrefs;
+  share: SharePrefs;
+}
+
+export interface RemoteHubPrefs {
+  enabled: boolean;
+  /** The folder the nodes write to (`--out`); its `nodes/` subfolder is read. */
+  folder: string | null;
+}
+
+/** Sharing this machine from the app. Mirrors `models::SharePrefs`. */
+export interface SharePrefs {
+  enabled: boolean;
+  /** Name other machines see; the host name when null. */
+  name: string | null;
+  sharePrompts: boolean;
+}
+
+/** What the sharing process last did. Mirrors `sharing::ShareStatus`. */
+export interface ShareStatus {
+  running: boolean;
+  name: string | null;
+  port: number | null;
+  discoverable: boolean;
+  error: string | null;
+  updatedAt: number;
+}
+
+/** An app this machine shares with. Mirrors `commands::ShareHub`. */
+export interface ShareHub {
+  hubId: string;
+  hubName: string;
+  pairedAt: number;
+}
+
+/** One machine publishing through `lunopeak-node`. Mirrors `hub::RemoteNode`. */
+export interface RemoteNode {
+  /** Random id the machine keeps in its app folder; its folder under `nodes/`. */
+  machineId: string;
+  /** Name to show, and the `host` on its rows. Unique: two machines with the
+   * same name get the start of their id appended. */
+  host: string;
+  os: string | null;
+  nodeVersion: string | null;
+  /** Its live data changed or heartbeat within the last 3 minutes. */
+  online: boolean;
+  /** Epoch ms the app last saw its live data change. */
+  lastSeen: number | null;
+  sessions: number;
+  includesPrompts: boolean;
+  /** Why some of its data couldn't be used. */
+  problem: string | null;
+}
+
+/** A machine paired directly. Mirrors `commands::PairedMachineView`. */
+export interface PairedMachine {
+  machineId: string;
+  name: string;
+  /** `host:port` it's reached at. */
+  addr: string;
+  pairedAt: number;
+  /** Epoch ms of the last successful fetch. */
+  lastOk: number | null;
+  /** Why the last fetch failed. */
+  error: string | null;
+}
+
+/** A sharing machine advertised on the local network. Mirrors `discovery::Discovered`. */
+export interface DiscoveredMachine {
+  machineId: string;
+  name: string;
+  /** `ip:port` to try, most likely reachable first. */
+  addrs: string[];
+  version: string | null;
+}
+
+/** What a machine at an address says about itself. Mirrors `commands::MachineProbe`. */
+export interface MachineProbe {
+  addr: string;
+  machineId: string;
+  name: string;
+  version: string;
+  pairingOpen: boolean;
+  isSelf: boolean;
+  alreadyPaired: boolean;
+  /** Why it can't be paired as is (versions that can't share). */
+  problem: string | null;
+}
+
+/** The shared folder's state. Mirrors `commands::FolderCheck`. */
+export interface FolderCheck {
+  /** False for a missing folder or a disconnected drive or share. */
+  exists: boolean;
+  /** Machines that have written to it. */
+  machines: number;
+}
+
+/** Spend on one machine. Mirrors `hub::MachineCost`. */
+export interface MachineCost {
+  /** Absent for this machine. */
+  host: string | null;
+  totalUsd: number;
+  sessions: number;
+  /** Last 30 local calendar days, oldest → newest. */
+  byDay: number[];
+}
+
+/** Costs across every machine. Mirrors `hub::MachineCosts`. */
+export interface MachineCosts {
+  /** Combined breakdown, same shape as `getCosts`. */
+  all: CostBreakdown;
+  /** This machine first, then the others by spend. */
+  machines: MachineCost[];
+}
+
+/** Live rows from every online remote machine. Mirrors `hub::RemoteLive`. */
+export interface RemoteLive {
+  activity: LiveActivity;
+  contexts: LiveContext[];
+  processes: ActiveProcess[];
 }
 
 export type StatuslineSegmentId =
@@ -213,6 +334,9 @@ export interface TokenUsage {
 }
 
 export interface Session {
+  /** Machine this row came from; absent for this machine. Set from a
+   *  remote node's snapshot, never by the local scanners. */
+  host?: string | null;
   id: string;
   projectPath: string | null;
   projectName: string | null;
@@ -371,6 +495,9 @@ export interface RepoCostDetail {
 }
 
 export interface ActiveProcess {
+  /** Machine this row came from; absent for this machine. Set from a
+   *  remote node's snapshot, never by the local scanners. */
+  host?: string | null;
   pid: number;
   name: string;
   cwd: string | null;
@@ -381,6 +508,9 @@ export interface ActiveProcess {
 export type LiveAgent = "claude" | "codex" | "cursor";
 
 export interface LiveEvent {
+  /** Machine this row came from; absent for this machine. Set from a
+   *  remote node's snapshot, never by the local scanners. */
+  host?: string | null;
   ts: number;
   sessionId: string;
   cwd: string | null;
@@ -400,6 +530,9 @@ export interface LiveTodo {
 }
 
 export interface SessionLiveState {
+  /** Machine this row came from; absent for this machine. Set from a
+   *  remote node's snapshot, never by the local scanners. */
+  host?: string | null;
   sessionId: string;
   cwd: string | null;
   lastTs: number;
@@ -433,6 +566,9 @@ export interface LiveActivity {
 
 /** Context-window fill for one running agent session. */
 export interface LiveContext {
+  /** Machine this row came from; absent for this machine. Set from a
+   *  remote node's snapshot, never by the local scanners. */
+  host?: string | null;
   agent: LiveAgent;
   sessionId: string;
   pid: number | null;

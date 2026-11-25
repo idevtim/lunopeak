@@ -1,8 +1,9 @@
 use crate::models::{
     CommandEntry, CostBreakdown, CostBucket, CostTotals, DayBucket, ErrorEntry, FileEntry,
     ModelUsage, RepoCost, RepoCostDetail, SequenceEntry, Session, SessionDetail, SessionEvent,
-    SessionStats, TokenUsage, BranchSpend, ToolBreakdown, ToolStats, TranscriptMatch,
+    SessionStats, SlotSpend, TokenUsage, BranchSpend, ToolBreakdown, ToolStats, TranscriptMatch,
 };
+use crate::models::SPEND_SLOT_MS;
 use crate::pricing;
 use anyhow::Result;
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, Local, NaiveDate, Timelike, Utc};
@@ -61,12 +62,19 @@ type Stamp = (SystemTime, usize);
 /// Bumped with the app version, so any release that changes what
 /// `parse_session_file` extracts re-parses once instead of serving stale
 /// sessions. Bump the suffix for parser changes made between releases.
-const DISK_CACHE_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "/3");
+const DISK_CACHE_VERSION: &str = concat!(env!("LUNOPEAK_VERSION"), "/4");
 
-/// On-disk row: `Session::cost_by_day` and `Session::cost_by_branch` are
-/// `#[serde(skip)]` (kept off IPC), so they travel alongside the session
+/// On-disk row: `Session::cost_by_day`, `cost_by_branch` and `cost_by_slot`
+/// are `#[serde(skip)]` (kept off IPC), so they travel alongside the session
 /// rather than inside it.
-type DiskRow = (PathBuf, Stamp, Option<Session>, BTreeMap<NaiveDate, f64>, BranchSpend);
+type DiskRow = (
+    PathBuf,
+    Stamp,
+    Option<Session>,
+    BTreeMap<NaiveDate, f64>,
+    BranchSpend,
+    SlotSpend,
+);
 
 impl Cache {
     pub fn new() -> Self {
@@ -85,10 +93,11 @@ fn read_disk_cache() -> HashMap<PathBuf, CacheEntry> {
     match serde_json::from_slice::<(String, Vec<DiskRow>)>(&raw) {
         Ok((version, rows)) if version == DISK_CACHE_VERSION => rows
             .into_iter()
-            .map(|(path, stamp, mut session, cost_by_day, cost_by_branch)| {
+            .map(|(path, stamp, mut session, cost_by_day, cost_by_branch, cost_by_slot)| {
                 if let Some(s) = session.as_mut() {
                     s.cost_by_day = cost_by_day;
                     s.cost_by_branch = cost_by_branch;
+                    s.cost_by_slot = cost_by_slot;
                 }
                 (path, CacheEntry { stamp, session })
             })
@@ -103,12 +112,14 @@ fn write_disk_cache(entries: &HashMap<PathBuf, CacheEntry>) {
     };
     let no_days = BTreeMap::new();
     let no_branches = BranchSpend::new();
+    let no_slots = SlotSpend::new();
     let rows: Vec<_> = entries
         .iter()
         .map(|(p, e)| {
             let days = e.session.as_ref().map_or(&no_days, |s| &s.cost_by_day);
             let branches = e.session.as_ref().map_or(&no_branches, |s| &s.cost_by_branch);
-            (p, &e.stamp, &e.session, days, branches)
+            let slots = e.session.as_ref().map_or(&no_slots, |s| &s.cost_by_slot);
+            (p, &e.stamp, &e.session, days, branches, slots)
         })
         .collect();
     let Ok(payload) = serde_json::to_vec(&(DISK_CACHE_VERSION, rows)) else {
@@ -139,6 +150,7 @@ fn parse_session_file(path: &Path, subagents: &[PathBuf]) -> Option<Session> {
     let mut usage = TokenUsage::default();
     let mut cost = 0.0_f64;
     let mut cost_by_day: BTreeMap<NaiveDate, f64> = BTreeMap::new();
+    let mut cost_by_slot = SlotSpend::new();
     let mut cost_by_branch = BranchSpend::new();
     // Branch of the latest line that named one; a turn without `gitBranch`
     // is billed to it.
@@ -224,8 +236,8 @@ fn parse_session_file(path: &Path, subagents: &[PathBuf]) -> Option<Session> {
                     // happened on, so a midnight-crossing or resumed session
                     // doesn't dump its whole cost on `start_ts`. Fall back to
                     // the session's first-seen day if a line lacks a timestamp.
-                    if let Some(day) = timestamp.or(start_ts).and_then(millis_to_local_date) {
-                        *cost_by_day.entry(day).or_insert(0.0) += turn_cost;
+                    if let Some(ts) = timestamp.or(start_ts) {
+                        add_day_spend(&mut cost_by_day, &mut cost_by_slot, ts, turn_cost);
                     }
                     if let (Some(b), Some(ts)) = (cur_branch.as_deref(), timestamp.or(start_ts)) {
                         add_branch_spend(&mut cost_by_branch, b, ts, turn_cost);
@@ -316,7 +328,7 @@ fn parse_session_file(path: &Path, subagents: &[PathBuf]) -> Option<Session> {
         subagent_cost += add_subagent_spend(
             sub,
             &mut usage,
-            Some(&mut cost_by_day),
+            Some((&mut cost_by_day, &mut cost_by_slot)),
             Some((&mut cost_by_branch, cur_branch.as_deref())),
         );
     }
@@ -326,6 +338,7 @@ fn parse_session_file(path: &Path, subagents: &[PathBuf]) -> Option<Session> {
         session_id.or_else(|| path.file_stem().map(|s| s.to_string_lossy().to_string()))?;
 
     Some(Session {
+        host: None,
         id: session_id,
         project_name: cwd.as_deref().and_then(|p| {
             Path::new(p)
@@ -342,6 +355,7 @@ fn parse_session_file(path: &Path, subagents: &[PathBuf]) -> Option<Session> {
         usage,
         cost_usd: cost,
         cost_by_day,
+        cost_by_slot,
         subagent_count: subagents.len() as u32,
         subagent_cost_usd: subagent_cost,
         cost_by_branch,
@@ -380,7 +394,7 @@ fn add_usage(total: &mut TokenUsage, turn: &TokenUsage) {
 /// (next to an `agent-<id>.meta.json`, read by `subagent_run` and the live scanner); the parent transcript
 /// only records the subagent's final result, never its tokens. Sorted for a
 /// stable cache stamp.
-pub(crate) fn subagent_files(session_file: &Path) -> Vec<PathBuf> {
+pub fn subagent_files(session_file: &Path) -> Vec<PathBuf> {
     let Some(stem) = session_file.file_stem() else {
         return Vec::new();
     };
@@ -464,7 +478,8 @@ fn subagent_run(path: &Path, cost_usd: f64) -> crate::models::SubagentRun {
 fn add_subagent_spend(
     path: &Path,
     usage: &mut TokenUsage,
-    mut cost_by_day: Option<&mut BTreeMap<NaiveDate, f64>>,
+    // Per-day totals (local time) and their UTC slots.
+    mut cost_by_day: Option<(&mut BTreeMap<NaiveDate, f64>, &mut SlotSpend)>,
     // Per-branch totals, and the parent's branch for turns that lack one.
     mut cost_by_branch: Option<(&mut BranchSpend, Option<&str>)>,
 ) -> f64 {
@@ -498,8 +513,8 @@ fn add_subagent_spend(
             .and_then(parse_iso_ts);
         let turn_cost = pricing::cost_of(m, &turn, ts);
         cost += turn_cost;
-        if let (Some(days), Some(day)) = (cost_by_day.as_deref_mut(), ts.and_then(millis_to_local_date)) {
-            *days.entry(day).or_insert(0.0) += turn_cost;
+        if let (Some((days, slots)), Some(ts)) = (cost_by_day.as_mut(), ts) {
+            add_day_spend(days, slots, ts, turn_cost);
         }
         if let Some((branches, fallback)) = cost_by_branch.as_mut() {
             let b = value.get("gitBranch").and_then(|v| v.as_str()).or(*fallback);
@@ -1302,6 +1317,26 @@ pub fn repo_cost_detail(sessions: &[Session], repo_key: &str) -> RepoCostDetail 
     }
 }
 
+/// Bill `cost` at `ts` to its local day and its 15-minute UTC slot.
+fn add_day_spend(days: &mut BTreeMap<NaiveDate, f64>, slots: &mut SlotSpend, ts: i64, cost: f64) {
+    if let Some(day) = millis_to_local_date(ts) {
+        *days.entry(day).or_insert(0.0) += cost;
+    }
+    *slots.entry(ts.div_euclid(SPEND_SLOT_MS) * SPEND_SLOT_MS).or_insert(0.0) += cost;
+}
+
+/// Local-day totals rebuilt from UTC slots, for spend recorded on a machine
+/// in another time zone. A slot's start decides its day.
+pub fn days_from_slots(slots: &SlotSpend) -> BTreeMap<NaiveDate, f64> {
+    let mut days = BTreeMap::new();
+    for (&start, &cost) in slots {
+        if let Some(day) = millis_to_local_date(start) {
+            *days.entry(day).or_insert(0.0) += cost;
+        }
+    }
+    days
+}
+
 fn millis_to_local_date(ms: i64) -> Option<NaiveDate> {
     let dt = millis_to_utc(ms)?;
     Some(dt.with_timezone(&Local).date_naive())
@@ -1512,7 +1547,7 @@ fn bucket_by_weekly_session(sessions: &[&Session]) -> Vec<CostBucket> {
 /// per-message 5h/weekly windows in `scanners::usage` — a session resumed days
 /// after it started (Claude Code reuses the original JSONL, so `start_ts` stays
 /// pinned to day one) no longer dumps all of its recent cost on the wrong day.
-fn cost_day_buckets(sessions: &[Session], days: usize) -> Vec<f64> {
+pub fn cost_day_buckets(sessions: &[Session], days: usize) -> Vec<f64> {
     let today = Local::now().date_naive();
     let mut out = vec![0.0; days];
     let span = days as i64;
@@ -1865,6 +1900,7 @@ mod tests {
         cost_by_day.insert(today, 50.0);
 
         let session = Session {
+            host: None,
             id: "s1".into(),
             project_path: None,
             project_name: None,
@@ -1877,6 +1913,7 @@ mod tests {
             usage: TokenUsage::default(),
             cost_usd: 150.0,
             cost_by_day,
+            cost_by_slot: Default::default(),
             subagent_count: 0,
             subagent_cost_usd: 0.0,
             cost_by_branch: Default::default(),

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Bot, Check, Code2, Folder, MessageCircle, Sparkles, Square, X } from "lucide-react";
+import { Activity, Bot, Check, Code2, Folder, MessageCircle, Monitor, Sparkles, Square, X } from "lucide-react";
 import { queries } from "@/lib/queries";
 import { api } from "@/lib/tauri";
 import { useDelayedLoading } from "@/hooks/useDelayedLoading";
@@ -71,6 +71,13 @@ export function LiveView() {
     ...queries.liveContexts,
     refetchInterval: 3000,
   });
+  // Other machines' agents (lunopeak-node). Read-only rows: no stop, reveal
+  // or open, and no memory-flat idle guess (their memory only updates on the
+  // node's heartbeat). Empty unless Settings → Other machines is on.
+  const remote = useQuery({
+    ...queries.remoteLive,
+    refetchInterval: 3000,
+  });
 
   const ingest = useProcessSamplesStore((s) => s.ingest);
   const samples = useProcessSamplesStore((s) => s.byPid);
@@ -79,14 +86,18 @@ export function LiveView() {
     if (procs.data) ingest(procs.data);
   }, [procs.data, ingest]);
 
-  const sessions = live.data?.sessions ?? [];
+  const sessions = useMemo(
+    () => [...(live.data?.sessions ?? []), ...(remote.data?.activity.sessions ?? [])],
+    [live.data, remote.data],
+  );
   const sessionsByCwdAgent = useMemo(() => {
     const map = new Map<string, SessionLiveState[]>();
     // Scanner sorts sessions by lastTs desc, so each bucket is freshest-first.
-    // Key by cwd + agent so codex processes don't pull from claude sessions
-    // when both agents are running in the same folder.
+    // Key by host + cwd + agent so codex processes don't pull from claude
+    // sessions when both agents run in the same folder, and a remote node's
+    // sessions never pair with a local process at the same path.
     for (const s of sessions) {
-      const key = sessionBucketKey(s.cwd, s.agent);
+      const key = sessionBucketKey(s.host, s.cwd, s.agent);
       if (!key) continue;
       const arr = map.get(key);
       if (arr) arr.push(s);
@@ -112,26 +123,30 @@ export function LiveView() {
     );
   }
 
-  const list = procs.data ?? [];
-  const feed = live.data?.feed ?? [];
+  const list = [...(procs.data ?? []), ...(remote.data?.processes ?? [])];
+  const feed = [...(live.data?.feed ?? []), ...(remote.data?.activity.feed ?? [])]
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, 40);
   const now = Date.now();
   const sorted = [...list].sort((a, b) => b.runtimeSec - a.runtimeSec);
 
   // Context rows carry the pid when the agent lets us map it (always for
   // Claude). Several Cursor chats share one pid — the list arrives freshest
   // first, so the first row per pid wins.
-  const contextList = contexts.data ?? [];
-  const contextByPid = new Map<number, LiveContext>();
+  const contextList = [...(contexts.data ?? []), ...(remote.data?.contexts ?? [])];
+  const contextByPid = new Map<string, LiveContext>();
   for (const c of contextList) {
-    if (c.pid != null && !contextByPid.has(c.pid)) contextByPid.set(c.pid, c);
+    if (c.pid == null) continue;
+    const k = pidKey(c.host, c.pid);
+    if (!contextByPid.has(k)) contextByPid.set(k, c);
   }
   const contextFor = (p: ActiveProcess): LiveContext | undefined => {
-    const byPid = contextByPid.get(p.pid);
+    const byPid = contextByPid.get(pidKey(p.host, p.pid));
     if (byPid) return byPid;
     const agent = agentOfProcess(p.name);
-    const key = agent ? sessionBucketKey(p.cwd, agent) : null;
+    const key = agent ? sessionBucketKey(p.host, p.cwd, agent) : null;
     return key
-      ? contextList.find((c) => c.pid == null && sessionBucketKey(c.cwd, c.agent) === key)
+      ? contextList.find((c) => c.pid == null && sessionBucketKey(c.host, c.cwd, c.agent) === key)
       : undefined;
   };
 
@@ -140,38 +155,38 @@ export function LiveView() {
   // process gets the freshest session) so co-located instances display
   // distinct activity. Pair only same-agent sessions — a codex process must
   // not display a claude session's last action just because they share a cwd.
-  const sessionByPid = new Map<number, SessionLiveState>();
+  const sessionByPid = new Map<string, SessionLiveState>();
   const claimed = new Set<string>();
   for (const p of sorted) {
-    const ctx = contextByPid.get(p.pid);
+    const ctx = contextByPid.get(pidKey(p.host, p.pid));
     if (!ctx || ctx.agent === "cursor") continue;
-    const exact = sessions.find((s) => s.sessionId === ctx.sessionId);
+    const exact = sessions.find((s) => s.sessionId === ctx.sessionId && (s.host ?? null) === (ctx.host ?? null));
     if (exact) {
-      sessionByPid.set(p.pid, exact);
+      sessionByPid.set(pidKey(p.host, p.pid), exact);
       claimed.add(exact.sessionId);
     }
   }
   for (const p of sorted) {
-    if (sessionByPid.has(p.pid)) continue;
+    if (sessionByPid.has(pidKey(p.host, p.pid))) continue;
     const agent = agentOfProcess(p.name);
     if (!agent) continue;
-    const key = sessionBucketKey(p.cwd, agent);
+    const key = sessionBucketKey(p.host, p.cwd, agent);
     if (!key) continue;
     const next = sessionsByCwdAgent.get(key)?.find((s) => !claimed.has(s.sessionId));
     if (!next) continue;
-    sessionByPid.set(p.pid, next);
+    sessionByPid.set(pidKey(p.host, p.pid), next);
     claimed.add(next.sessionId);
   }
 
   const rows = sorted.map((p) => {
-    const session = sessionByPid.get(p.pid);
+    const session = sessionByPid.get(pidKey(p.host, p.pid));
     const context = contextFor(p);
     const subagentsRunning = Math.max(
       context?.subagentsRunning ?? 0,
       session?.subagents.filter((a) => a.status === "running").length ?? 0,
     );
     // Memory can sit flat while background subagents do the work.
-    const stale = isStale(samples[p.pid]) && subagentsRunning === 0;
+    const stale = !p.host && isStale(samples[p.pid]) && subagentsRunning === 0;
     const state: SessionState = stale
       ? "idle"
       : sessionState({
@@ -227,9 +242,9 @@ export function LiveView() {
             <>
               {active.map((r) => (
                 <SessionCard
-                  key={r.proc.pid}
+                  key={pidKey(r.proc.host, r.proc.pid)}
                   proc={r.proc}
-                  samples={samples[r.proc.pid]}
+                  samples={r.proc.host ? undefined : samples[r.proc.pid]}
                   session={r.session}
                   context={r.context}
                   state={r.state}
@@ -272,7 +287,12 @@ function SessionCard({ proc, samples, session, context, state, now }: SessionCar
   const title = sessionTitle(proc, context);
   const folder = basename(proc.cwd);
   const model = shortModel(context?.model ?? null);
-  const subline = [folder !== title ? folder : null, model, `running ${runningFor(proc.runtimeSec)}`]
+  const subline = [
+    proc.host,
+    folder !== title ? folder : null,
+    model,
+    `running ${runningFor(proc.runtimeSec)}`,
+  ]
     .filter(Boolean)
     .join(" · ");
   const memMb = Math.round(proc.memoryKb / 1024);
@@ -305,6 +325,12 @@ function SessionCard({ proc, samples, session, context, state, now }: SessionCar
           </span>
           <span className="truncate text-xs text-zinc-500 dark:text-zinc-400">{subline}</span>
         </div>
+        {proc.host && (
+          <Pill className="shrink-0" title={`Running on ${proc.host}`}>
+            <Monitor size={11} strokeWidth={2} />
+            {proc.host}
+          </Pill>
+        )}
         <span
           className="hidden shrink-0 items-center gap-1.5 text-[11.5px] tabular-nums text-zinc-500 sm:flex dark:text-zinc-400"
           title={`Memory use over the last ${samples?.samples.length ?? 0} samples · PID ${proc.pid}`}
@@ -378,12 +404,16 @@ function SessionCard({ proc, samples, session, context, state, now }: SessionCar
 
       <div className="flex flex-wrap items-center gap-3 border-t border-black/[0.05] pt-2.5 dark:border-white/[0.06]">
         <ChatMemory context={context} />
-        <SessionActions
-          proc={proc}
-          fmName={fmName}
-          onOpenInEditor={proc.cwd ? () => openInEditor(proc.cwd!) : undefined}
-          onReveal={onReveal}
-        />
+        {proc.host ? (
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">On {proc.host}</span>
+        ) : (
+          <SessionActions
+            proc={proc}
+            fmName={fmName}
+            onOpenInEditor={proc.cwd ? () => openInEditor(proc.cwd!) : undefined}
+            onReveal={onReveal}
+          />
+        )}
       </div>
     </Card>
   );
@@ -703,14 +733,21 @@ function cwdKey(path: string | null | undefined): string | null {
   return trimmed.toLowerCase();
 }
 
-/// Bucket key combining cwd + agent so claude and codex sessions in the same
-/// folder live in separate pools.
+/// Bucket key combining host + cwd + agent so claude and codex sessions in
+/// the same folder live in separate pools, and so do two machines' sessions
+/// in the same path. `host` is absent for this machine.
 function sessionBucketKey(
+  host: string | null | undefined,
   path: string | null | undefined,
   agent: LiveAgent,
 ): string | null {
   const c = cwdKey(path);
-  return c ? `${agent}::${c}` : null;
+  return c ? `${host ?? ""}::${agent}::${c}` : null;
+}
+
+/// Pids are only unique per machine.
+function pidKey(host: string | null | undefined, pid: number): string {
+  return `${host ?? ""}::${pid}`;
 }
 
 /// Map a process's reported name to its agent type. Returns null for agents

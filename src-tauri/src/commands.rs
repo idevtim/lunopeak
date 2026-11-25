@@ -7,6 +7,8 @@ use crate::models::{
     TranscriptMatch,
     UsageLimits, WorktreeEntry, RepoInsights, PrInsights,
 };
+use lunopeak_core::feeds::Sources;
+use lunopeak_core::hub::{Hub, MachineCosts, RemoteLive, RemoteNode};
 use crate::process_ext::NoWindow;
 use crate::scanners::codex::Cache as CodexCache;
 use crate::scanners::sessions::Cache as SessionsCache;
@@ -1080,30 +1082,8 @@ pub async fn get_active_processes(
     let claude_on = claude_enabled(&app, settings_cache.inner());
     let codex_on = codex_enabled(&app, settings_cache.inner());
     let cursor_on = cursor_enabled(&app, settings_cache.inner());
-    blocking(move || {
-        let mut procs = scanners::processes::scan();
-        // Drop rows the user disabled so the live view doesn't surface a PID
-        // for a provider whose other data sources are gated off. Strip
-        // `.exe` so the match works the same way on Windows and macOS.
-        procs.retain(|p| {
-            let raw = p.name.to_lowercase();
-            let name = raw.strip_suffix(".exe").unwrap_or(&raw);
-            let is_claude = name == "claude" || name == "cline" || name.starts_with("claude ");
-            let is_codex = name == "codex" || name.starts_with("codex ");
-            let is_cursor = name == "cursor" || name.starts_with("cursor ");
-            if is_claude {
-                claude_on
-            } else if is_codex {
-                codex_on
-            } else if is_cursor {
-                cursor_on
-            } else {
-                true
-            }
-        });
-        Ok(procs)
-    })
-    .await
+    let src = Sources { claude: claude_on, codex: codex_on, cursor: cursor_on };
+    blocking(move || Ok(lunopeak_core::feeds::active_processes(src))).await
 }
 
 #[tauri::command]
@@ -1125,37 +1105,15 @@ pub async fn get_live_activity(
     let claude_on = claude_enabled(&app, settings_cache.inner());
     let codex_on = codex_enabled(&app, settings_cache.inner());
     let cursor_on = cursor_enabled(&app, settings_cache.inner());
-    if !claude_on && !codex_on && !cursor_on {
+    let src = Sources { claude: claude_on, codex: codex_on, cursor: cursor_on };
+    if !src.any() {
         return Ok(LiveActivity {
             feed: Vec::new(),
             sessions: Vec::new(),
         });
     }
     let limit = limit.unwrap_or(40);
-    blocking(move || {
-        let mut feed: Vec<crate::models::LiveEvent> = Vec::new();
-        let mut sessions: Vec<crate::models::SessionLiveState> = Vec::new();
-        if claude_on {
-            let mut a = scanners::live::collect(limit);
-            feed.append(&mut a.feed);
-            sessions.append(&mut a.sessions);
-        }
-        if codex_on {
-            let mut b = scanners::live_codex::collect(limit);
-            feed.append(&mut b.feed);
-            sessions.append(&mut b.sessions);
-        }
-        if cursor_on {
-            let mut c = scanners::live_cursor::collect(limit);
-            feed.append(&mut c.feed);
-            sessions.append(&mut c.sessions);
-        }
-        feed.sort_by_key(|e| std::cmp::Reverse(e.ts));
-        feed.truncate(limit);
-        sessions.sort_by_key(|s| std::cmp::Reverse(s.last_ts));
-        Ok(LiveActivity { feed, sessions })
-    })
-    .await
+    blocking(move || Ok(lunopeak_core::feeds::live_activity(src, limit))).await
 }
 
 /// Context-window fill for every running agent session — one row per Claude
@@ -1170,31 +1128,404 @@ pub async fn get_live_contexts(
     let claude_on = claude_enabled(&app, settings_cache.inner());
     let codex_on = codex_enabled(&app, settings_cache.inner());
     let cursor_on = cursor_enabled(&app, settings_cache.inner());
-    if !claude_on && !codex_on && !cursor_on {
+    let src = Sources { claude: claude_on, codex: codex_on, cursor: cursor_on };
+    if !src.any() {
         return Ok(Vec::new());
     }
+    blocking(move || Ok(lunopeak_core::feeds::live_contexts(src))).await
+}
+
+// ── Other machines (lunopeak-node) ──────────────────────────────────────
+//
+// Kept apart from the local commands on purpose: Ports, Repos, Worktrees and
+// the dashboard join processes and sessions on cwd or pid alone, so remote
+// rows only reach the views that call these and know about `host`. The tray,
+// status line and budget alerts stay this-machine only.
+
+/// Where to read other machines from, and this machine's id (skipped), or
+/// `None` when reading other machines is off. Directly paired machines come
+/// first, so one that also writes to the shared folder is read fresh.
+fn remote_root(app: &AppHandle, cache: &SettingsCache) -> Option<(Vec<std::path::PathBuf>, Option<String>)> {
+    let s = cache.load(app).ok()?;
+    if !s.remote.enabled {
+        return None;
+    }
+    let mut roots: Vec<std::path::PathBuf> = crate::direct_link::cache_root().into_iter().collect();
+    if let Some(folder) = s.remote.folder.filter(|f| !f.trim().is_empty()) {
+        roots.push(std::path::PathBuf::from(folder));
+    }
+    // This machine's id, so a node running here isn't shown as another machine.
+    Some((roots, lunopeak_core::node_wire::local_machine_id()))
+}
+
+/// A directly paired machine, for Settings. The token stays in Rust.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairedMachineView {
+    pub machine_id: String,
+    pub name: String,
+    pub addr: String,
+    pub paired_at: i64,
+    pub last_ok: Option<i64>,
+    pub error: Option<String>,
+}
+
+/// What a machine at an address says about itself, before pairing.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MachineProbe {
+    pub addr: String,
+    pub machine_id: String,
+    pub name: String,
+    pub version: String,
+    pub pairing_open: bool,
+    /// It's this machine.
+    pub is_self: bool,
+    pub already_paired: bool,
+    /// Why it can't be paired as is (a version that can't share with this
+    /// one), in words for the user.
+    pub problem: Option<String>,
+}
+
+/// Why `hello` can't share with this build, if it can't.
+fn version_problem(hello: &lunopeak_core::direct::Hello) -> Option<String> {
+    use std::cmp::Ordering;
+    match hello.schema.cmp(&lunopeak_core::node_wire::SCHEMA) {
+        Ordering::Equal => None,
+        Ordering::Greater => Some(format!(
+            "It runs LunoPeak {}, newer than this one ({}). Update LunoPeak here first.",
+            hello.version,
+            lunopeak_core::VERSION
+        )),
+        Ordering::Less => Some(format!(
+            "It runs LunoPeak {}, older than this one ({}). Update it there first.",
+            hello.version,
+            lunopeak_core::VERSION
+        )),
+    }
+}
+
+fn app_dir_or_err() -> Result<std::path::PathBuf, String> {
+    crate::direct_link::app_dir().ok_or_else(|| "Couldn't find LunoPeak's settings folder".to_string())
+}
+
+#[tauri::command]
+pub async fn get_paired_machines(
+    links: State<'_, crate::direct_link::DirectLinks>,
+) -> Result<Vec<PairedMachineView>, String> {
+    let links = links.inner().clone();
     blocking(move || {
-        let mut out = Vec::new();
-        if claude_on {
-            out.extend(scanners::live::contexts());
+        let status = links.status();
+        Ok(lunopeak_core::direct::paired_machines(&app_dir_or_err()?)
+            .into_iter()
+            .map(|m| {
+                let st = status.get(&m.machine_id).cloned().unwrap_or_default();
+                PairedMachineView {
+                    machine_id: m.machine_id,
+                    name: m.name,
+                    addr: m.addr,
+                    paired_at: m.paired_at,
+                    last_ok: st.last_ok,
+                    error: st.error,
+                }
+            })
+            .collect())
+    })
+    .await
+}
+
+/// What's in the shared folder, for Settings: whether it's there at all
+/// (a disconnected drive or share looks like a missing folder) and how many
+/// machines have written to it.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderCheck {
+    pub exists: bool,
+    pub machines: usize,
+}
+
+#[tauri::command]
+pub async fn check_shared_folder(path: String) -> Result<FolderCheck, String> {
+    blocking(move || {
+        let root = std::path::PathBuf::from(&path);
+        let exists = root.is_dir();
+        let machines = std::fs::read_dir(root.join(lunopeak_core::node_wire::NODES_DIR))
+            .map(|rd| {
+                rd.flatten()
+                    .filter(|e| lunopeak_core::node_wire::is_machine_id(&e.file_name().to_string_lossy()))
+                    .count()
+            })
+            .unwrap_or(0);
+        Ok(FolderCheck { exists, machines })
+    })
+    .await
+}
+
+/// Whether "Share this machine" is running, from the sharing process.
+#[tauri::command]
+pub async fn get_share_status() -> Result<crate::sharing::ShareStatus, String> {
+    blocking(|| Ok(crate::sharing::read_status())).await
+}
+
+/// Open a pairing window for this machine and return its code.
+#[tauri::command]
+pub async fn open_share_pairing() -> Result<String, String> {
+    blocking(|| {
+        if !crate::sharing::read_status().running {
+            return Err("Sharing isn't running yet. Turn on Share this machine and wait a few seconds.".into());
         }
-        // Claude maps pids itself; Codex and Cursor pair against the process
-        // table, so only pay for the full scan when one of them is on.
-        if codex_on || cursor_on {
-            let procs = scanners::processes::scan();
-            if codex_on {
-                out.extend(scanners::live_codex::contexts(&procs));
-            }
-            if cursor_on {
-                out.extend(scanners::live_cursor::contexts(&procs));
+        lunopeak_core::direct::open_pairing(&app_dir_or_err()?).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn close_share_pairing() -> Result<(), String> {
+    blocking(|| {
+        lunopeak_core::direct::close_pairing(&app_dir_or_err()?);
+        Ok(())
+    })
+    .await
+}
+
+/// An app this machine shares with. The token hash stays in Rust.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareHub {
+    pub hub_id: String,
+    pub hub_name: String,
+    pub paired_at: i64,
+}
+
+#[tauri::command]
+pub async fn get_share_hubs() -> Result<Vec<ShareHub>, String> {
+    blocking(|| {
+        Ok(lunopeak_core::direct::paired_hubs(&app_dir_or_err()?)
+            .into_iter()
+            .map(|h| ShareHub {
+                hub_id: h.hub_id,
+                hub_name: h.hub_name,
+                paired_at: h.paired_at,
+            })
+            .collect())
+    })
+    .await
+}
+
+/// Stop sharing with one app. It finds out on its next fetch.
+#[tauri::command]
+pub async fn remove_share_hub(hub_id: String) -> Result<(), String> {
+    blocking(move || {
+        lunopeak_core::direct::unpair_hub(&app_dir_or_err()?, &hub_id)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// Sharing machines advertised on the local network, minus this one.
+#[tauri::command]
+pub async fn get_discovered_machines(
+    app: AppHandle,
+) -> Result<Vec<lunopeak_core::discovery::Discovered>, String> {
+    blocking(move || app.state::<crate::direct_link::Discovery>().machines()).await
+}
+
+#[tauri::command]
+pub async fn probe_machine(addr: String) -> Result<MachineProbe, String> {
+    blocking(move || {
+        let addr = lunopeak_core::direct::normalize_addr(&addr)
+            .ok_or_else(|| "That doesn't look like an address. Try an IP like 192.168.1.20, or a name like build-box.local.".to_string())?;
+        let hello = lunopeak_core::direct::hello(&addr).map_err(|e| e.to_string())?;
+        let paired = lunopeak_core::direct::paired_machines(&app_dir_or_err()?);
+        Ok(MachineProbe {
+            problem: version_problem(&hello),
+            is_self: Some(&hello.machine_id) == lunopeak_core::node_wire::local_machine_id().as_ref(),
+            already_paired: paired.iter().any(|m| m.machine_id == hello.machine_id),
+            addr,
+            machine_id: hello.machine_id,
+            name: hello.name,
+            version: hello.version,
+            pairing_open: hello.pairing_open,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn pair_machine(
+    addr: String,
+    code: String,
+    links: State<'_, crate::direct_link::DirectLinks>,
+) -> Result<String, String> {
+    let links = links.inner().clone();
+    blocking(move || {
+        let dir = app_dir_or_err()?;
+        let addr = lunopeak_core::direct::normalize_addr(&addr)
+            .ok_or_else(|| "That doesn't look like an address.".to_string())?;
+        let me = lunopeak_core::node_wire::local_machine_id()
+            .ok_or_else(|| "Couldn't read this machine's id".to_string())?;
+        let my_name = lunopeak_core::node_wire::default_name().unwrap_or_else(|| "LunoPeak".into());
+        // Don't spend a pairing try on a machine whose data couldn't be read.
+        let hello = lunopeak_core::direct::hello(&addr).map_err(|e| e.to_string())?;
+        if let Some(problem) = version_problem(&hello) {
+            return Err(problem);
+        }
+        let m = lunopeak_core::direct::pair(&addr, &code, &me, &my_name).map_err(|e| e.to_string())?;
+        if m.machine_id == me {
+            return Err("That's this machine.".into());
+        }
+        let mut all = lunopeak_core::direct::paired_machines(&dir);
+        all.retain(|x| x.machine_id != m.machine_id);
+        let name = m.name.clone();
+        all.push(m);
+        lunopeak_core::direct::save_paired_machines(&dir, &all).map_err(|e| e.to_string())?;
+        links.wake();
+        Ok(name)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn unpair_machine(
+    machine_id: String,
+    links: State<'_, crate::direct_link::DirectLinks>,
+) -> Result<(), String> {
+    let links = links.inner().clone();
+    blocking(move || {
+        let dir = app_dir_or_err()?;
+        let mut all = lunopeak_core::direct::paired_machines(&dir);
+        if let Some(m) = all.iter().find(|m| m.machine_id == machine_id) {
+            // Best effort: it may be off. It stops being read here either way.
+            if let Err(e) = lunopeak_core::direct::unpair(m) {
+                crate::elog!(info, "direct", "unpair {} remotely: {e}", m.name);
             }
         }
-        // Busy sessions first, then freshest activity.
-        out.sort_by(|a, b| {
-            let busy = |c: &LiveContext| c.status.as_deref() == Some("busy");
-            busy(b).cmp(&busy(a)).then(b.last_ts.cmp(&a.last_ts))
-        });
-        Ok(out)
+        all.retain(|m| m.machine_id != machine_id);
+        lunopeak_core::direct::save_paired_machines(&dir, &all).map_err(|e| e.to_string())?;
+        links.wake();
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_remote_nodes(
+    app: AppHandle,
+    hub: State<'_, Hub>,
+    cache: State<'_, SessionsCache>,
+    codex_cache: State<'_, CodexCache>,
+    settings_cache: State<'_, SettingsCache>,
+) -> Result<Vec<RemoteNode>, String> {
+    let Some((root, me)) = remote_root(&app, settings_cache.inner()) else {
+        return Ok(Vec::new());
+    };
+    let claude_on = claude_enabled(&app, settings_cache.inner());
+    let codex_on = codex_enabled(&app, settings_cache.inner());
+    let hub = hub.inner().clone();
+    let cache = cache.inner().clone();
+    let codex_cache = codex_cache.inner().clone();
+    blocking(move || {
+        let local = local_sessions(&cache, &codex_cache, claude_on, codex_on)?;
+        let ids: std::collections::HashSet<String> = local.into_iter().map(|s| s.id).collect();
+        // Count what each node actually adds, not what it published: sessions
+        // this machine (or an earlier node) already has are dropped.
+        let added = hub.added_session_counts(&root, me.as_deref(), &ids);
+        let mut nodes = hub.nodes(&root, me.as_deref());
+        for n in &mut nodes {
+            n.sessions = added.get(&n.host).copied().unwrap_or(0);
+        }
+        Ok(nodes)
+    })
+    .await
+}
+
+/// This machine's Claude and Codex sessions, each only if that agent is on.
+fn local_sessions(
+    cache: &SessionsCache,
+    codex_cache: &CodexCache,
+    claude_on: bool,
+    codex_on: bool,
+) -> Result<Vec<Session>, String> {
+    let mut local = if claude_on {
+        scanners::sessions::scan_all(cache).map_err(|e| e.to_string())?
+    } else {
+        Vec::new()
+    };
+    if codex_on {
+        local.extend(scanners::codex::scan_all(codex_cache).map_err(|e| e.to_string())?);
+    }
+    Ok(local)
+}
+
+#[tauri::command]
+pub async fn get_remote_live(
+    app: AppHandle,
+    hub: State<'_, Hub>,
+    settings_cache: State<'_, SettingsCache>,
+) -> Result<RemoteLive, String> {
+    let Some((root, me)) = remote_root(&app, settings_cache.inner()) else {
+        return Ok(RemoteLive::default());
+    };
+    let hub = hub.inner().clone();
+    blocking(move || Ok(hub.live(&root, me.as_deref()))).await
+}
+
+/// Claude sessions from other machines, minus any id this machine also has.
+#[tauri::command]
+pub async fn get_remote_sessions(
+    app: AppHandle,
+    hub: State<'_, Hub>,
+    cache: State<'_, SessionsCache>,
+    settings_cache: State<'_, SettingsCache>,
+) -> Result<Vec<Session>, String> {
+    let Some((root, me)) = remote_root(&app, settings_cache.inner()) else {
+        return Ok(Vec::new());
+    };
+    let claude_on = claude_enabled(&app, settings_cache.inner());
+    let hub = hub.inner().clone();
+    let cache = cache.inner().clone();
+    blocking(move || {
+        let local: std::collections::HashSet<String> = if claude_on {
+            scanners::sessions::scan_all(&cache)
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(|s| s.id)
+                .collect()
+        } else {
+            Default::default()
+        };
+        Ok(hub.sessions(&root, me.as_deref(), "claude", &local))
+    })
+    .await
+}
+
+/// Spend across this machine and every other one, for the Costs view.
+/// `None` when reading other machines is off. The menu bar, status line and
+/// budget alerts keep using `get_costs` (this machine only).
+#[tauri::command]
+pub async fn get_machine_costs(
+    app: AppHandle,
+    hub: State<'_, Hub>,
+    cache: State<'_, SessionsCache>,
+    codex_cache: State<'_, CodexCache>,
+    settings_cache: State<'_, SettingsCache>,
+) -> Result<Option<MachineCosts>, String> {
+    let Some((root, me)) = remote_root(&app, settings_cache.inner()) else {
+        return Ok(None);
+    };
+    let claude_on = claude_enabled(&app, settings_cache.inner());
+    let codex_on = codex_enabled(&app, settings_cache.inner());
+    let hub = hub.inner().clone();
+    let cache = cache.inner().clone();
+    let codex_cache = codex_cache.inner().clone();
+    blocking(move || {
+        let local = local_sessions(&cache, &codex_cache, claude_on, codex_on)?;
+        let ids: std::collections::HashSet<String> = local.iter().map(|s| s.id.clone()).collect();
+        // Each node already applied its own machine's agent settings.
+        let mut remote = hub.sessions(&root, me.as_deref(), "claude", &ids);
+        remote.extend(hub.sessions(&root, me.as_deref(), "codex", &ids));
+        Ok(Some(lunopeak_core::hub::machine_costs(&local, &remote)))
     })
     .await
 }
@@ -1855,7 +2186,7 @@ pub async fn take_snapshot(
     let repo_cache = repo_cache.inner().clone();
     blocking(move || {
         let repos = repo_index(&app, &settings_cache, &repo_cache)?;
-        scanners::snapshots::capture(&app, &repos, &name, note.as_deref())
+        crate::snapshots::capture(&app, &repos, &name, note.as_deref())
             .map_err(|e| e.to_string())
     })
     .await
@@ -1863,12 +2194,12 @@ pub async fn take_snapshot(
 
 #[tauri::command]
 pub async fn list_snapshots(app: AppHandle) -> Result<Vec<Snapshot>, String> {
-    blocking(move || scanners::snapshots::list(&app).map_err(|e| e.to_string())).await
+    blocking(move || crate::snapshots::list(&app).map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]
 pub async fn delete_snapshot(app: AppHandle, id: String) -> Result<(), String> {
-    blocking(move || scanners::snapshots::delete(&app, &id).map_err(|e| e.to_string())).await
+    blocking(move || crate::snapshots::delete(&app, &id).map_err(|e| e.to_string())).await
 }
 
 // ── GitHub pull requests ───────────────────────────────────────────────

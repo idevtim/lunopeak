@@ -22,6 +22,15 @@ import type {
   ListeningPort,
   LiveActivity,
   LiveContext,
+  MachineCosts,
+  RemoteLive,
+  RemoteNode,
+  PairedMachine,
+  MachineProbe,
+  DiscoveredMachine,
+  ShareStatus,
+  ShareHub,
+  FolderCheck,
   TerminalIntegrations,
   StatuslinePrefs,
   StatuslineSpan,
@@ -165,6 +174,40 @@ export const api = {
     call<LiveActivity>("get_live_activity", { limit: limit ?? null }, demo.liveActivity),
   getLiveContexts: () =>
     call<LiveContext[]>("get_live_contexts", undefined, demo.liveContexts),
+
+  // Other machines (lunopeak-node). Empty in browser mode.
+  getRemoteNodes: () => call<RemoteNode[]>("get_remote_nodes", undefined, []),
+  getRemoteLive: () =>
+    call<RemoteLive>("get_remote_live", undefined, {
+      activity: { feed: [], sessions: [] },
+      contexts: [],
+      processes: [],
+    }),
+  getRemoteSessions: () => call<Session[]>("get_remote_sessions", undefined, []),
+  /** `null` when Settings → Other machines is off. */
+  getMachineCosts: () => call<MachineCosts | null>("get_machine_costs", undefined, null),
+  // Machines paired directly (no shared folder). Pairing needs the desktop app.
+  getPairedMachines: () => call<PairedMachine[]>("get_paired_machines", undefined, []),
+  getDiscoveredMachines: () => call<DiscoveredMachine[]>("get_discovered_machines", undefined, []),
+  probeMachine: (addr: string) => call<MachineProbe>("probe_machine", { addr }),
+  pairMachine: (addr: string, code: string) => call<string>("pair_machine", { addr, code }),
+  unpairMachine: (machineId: string) => call<void>("unpair_machine", { machineId }),
+  // Sharing this machine (Settings → Share this machine).
+  getShareStatus: () =>
+    call<ShareStatus>("get_share_status", undefined, {
+      running: false,
+      name: null,
+      port: null,
+      discoverable: false,
+      error: null,
+      updatedAt: 0,
+    }),
+  checkSharedFolder: (path: string) =>
+    call<FolderCheck>("check_shared_folder", { path }, { exists: true, machines: 0 }),
+  openSharePairing: () => call<string>("open_share_pairing"),
+  closeSharePairing: () => call<void>("close_share_pairing"),
+  getShareHubs: () => call<ShareHub[]>("get_share_hubs", undefined, []),
+  removeShareHub: (hubId: string) => call<void>("remove_share_hub", { hubId }),
 
   // Terminal status lines
   getTerminalIntegrations: () =>

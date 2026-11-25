@@ -68,6 +68,7 @@ function FeedRow({ event, now, first }: { event: LiveEvent; now: number; first: 
         </span>
         <span className="flex min-w-0 items-center text-[11.5px] text-zinc-500 dark:text-zinc-400">
           <span className="truncate">
+            {event.host && <>{event.host} · </>}
             {folder && <>{folder} · </>}
             {event.subagentId ? (
               <span title="Done by a subagent">

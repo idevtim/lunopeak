@@ -28,7 +28,7 @@ const ZST_SUFFIX: &str = ".jsonl.zst";
 /// A Codex rollout, in either on-disk form. Codex 0.163 rewrote every
 /// existing rollout as `rollout-*.jsonl.zst`; the line format inside is
 /// unchanged. Shared by the live, usage and session scanners.
-pub(crate) fn is_rollout(path: &Path) -> bool {
+pub fn is_rollout(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
         return false;
     };
@@ -52,7 +52,7 @@ fn rollout_key(path: &Path) -> PathBuf {
 
 /// Line reader over a rollout. Compressed files are decoded into memory —
 /// they're tens of KB on disk and a few MB at most expanded.
-pub(crate) fn open_rollout(path: &Path) -> Option<Box<dyn BufRead>> {
+pub fn open_rollout(path: &Path) -> Option<Box<dyn BufRead>> {
     if !is_compressed(path) {
         return Some(Box::new(BufReader::new(File::open(path).ok()?)));
     }
@@ -79,7 +79,7 @@ fn decode_zstd(raw: &[u8]) -> Option<Vec<u8>> {
 
 /// Every rollout under `root` with its mtime. When both forms of one rollout
 /// exist, the newer file wins.
-pub(crate) fn rollout_files(root: &Path) -> Vec<(PathBuf, SystemTime)> {
+pub fn rollout_files(root: &Path) -> Vec<(PathBuf, SystemTime)> {
     let mut by_key: HashMap<PathBuf, (PathBuf, SystemTime)> = HashMap::new();
     for entry in walkdir::WalkDir::new(root).into_iter().flatten() {
         if !entry.file_type().is_file() || !is_rollout(entry.path()) {
@@ -280,8 +280,11 @@ fn parse_rollout(path: &Path) -> Option<Session> {
     // start_ts bucketing — so Codex still shows up in the day/today cost
     // buckets that now read `cost_by_day`.
     let mut cost_by_day = std::collections::BTreeMap::new();
+    let mut cost_by_slot = crate::models::SlotSpend::new();
     if cost > 0.0 {
         let ts = start_ts.or(end_ts).unwrap_or(0);
+        let slot = crate::models::SPEND_SLOT_MS;
+        cost_by_slot.insert(ts.div_euclid(slot) * slot, cost);
         if let Some(date) = DateTime::<Utc>::from_timestamp_millis(ts)
             .map(|dt| dt.with_timezone(&Local).date_naive())
         {
@@ -290,6 +293,7 @@ fn parse_rollout(path: &Path) -> Option<Session> {
     }
 
     Some(Session {
+        host: None,
         id: session_id,
         project_name: cwd.as_deref().and_then(|p| {
             Path::new(p)
@@ -306,6 +310,7 @@ fn parse_rollout(path: &Path) -> Option<Session> {
         usage,
         cost_usd: cost,
         cost_by_day,
+        cost_by_slot,
         subagent_count: 0,
         subagent_cost_usd: 0.0,
         cost_by_branch: Default::default(),

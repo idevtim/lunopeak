@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Bot, ChevronRight, History, Search } from "lucide-react";
+import { Bot, ChevronRight, History, Monitor, Search } from "lucide-react";
 import { queries } from "@/lib/queries";
 import { useDelayedLoading } from "@/hooks/useDelayedLoading";
 import { useHashRoute } from "@/hooks/useHashRoute";
@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/Button";
 import { ProviderIcon } from "@/components/ui/ProviderIcon";
 import { formatUsd, plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { toast } from "@/stores/toastStore";
 import type { Session } from "@/types/api";
 import { SessionsSkeleton } from "./SessionsSkeleton";
 import { dayLabel, friendlyModel, sessionMeta, sessionTitle, shortDuration } from "./sessionFormat";
@@ -25,11 +26,18 @@ const RANGE_OPTIONS: { value: Range; label: string }[] = [
 ];
 
 const DAY_MS = 86_400_000;
+const ALL_MACHINES = "*all"; // host names are [a-z0-9_-], so these can't collide
+const THIS_MACHINE = "*local";
 const PAGE_SIZE = 60;
 
 export function SessionsView() {
   const sessionsQ = useQuery(queries.sessions);
   const live = useQuery({ ...queries.liveContexts, refetchInterval: 10_000 });
+  // Other machines (lunopeak-node). Empty unless Settings → Other machines is
+  // on. Their transcripts stay where they ran, so these rows don't replay.
+  const remoteQ = useQuery(queries.remoteSessions);
+  const remoteLive = useQuery({ ...queries.remoteLive, refetchInterval: 10_000 });
+  const [machine, setMachine] = useState<string>(ALL_MACHINES);
   const { navigateTo } = useHashRoute();
   const [range, setRange] = useState<Range>("30");
   const [search, setSearch] = useState("");
@@ -37,7 +45,23 @@ export function SessionsView() {
 
   const showSkeleton = useDelayedLoading(sessionsQ.isLoading);
 
-  const all = useMemo(() => sessionsQ.data ?? [], [sessionsQ.data]);
+  const remote = useMemo(() => remoteQ.data ?? [], [remoteQ.data]);
+  const hosts = useMemo(() => [...new Set(remote.map((s) => s.host!))].sort(), [remote]);
+  const merged = useMemo(
+    () => [...(sessionsQ.data ?? []), ...remote].sort((a, b) => b.endTs - a.endTs),
+    [sessionsQ.data, remote],
+  );
+  // A host that stopped publishing drops out of the filter; fall back to all.
+  const shownMachine = machine === ALL_MACHINES || machine === THIS_MACHINE || hosts.includes(machine)
+    ? machine
+    : ALL_MACHINES;
+  const all = useMemo(
+    () =>
+      shownMachine === ALL_MACHINES
+        ? merged
+        : merged.filter((s) => (shownMachine === THIS_MACHINE ? !s.host : s.host === shownMachine)),
+    [merged, shownMachine],
+  );
   const inRange = useMemo(() => {
     if (range === "all") return all;
     const cutoff = Date.now() - Number(range) * DAY_MS;
@@ -51,6 +75,7 @@ export function SessionsView() {
       (s) =>
         s.firstPrompt?.toLowerCase().includes(q) ||
         s.projectName?.toLowerCase().includes(q) ||
+        s.host?.includes(q) ||
         s.branch?.toLowerCase().includes(q),
     );
   }, [inRange, search]);
@@ -59,11 +84,11 @@ export function SessionsView() {
     () =>
       // Session id → subagents it has running right now.
       new Map(
-        (live.data ?? [])
+        [...(live.data ?? []), ...(remoteLive.data?.contexts ?? [])]
           .filter((c) => c.agent === "claude")
           .map((c) => [c.sessionId, c.subagentsRunning] as const),
       ),
-    [live.data],
+    [live.data, remoteLive.data],
   );
 
   const groups = useMemo(() => groupByDay(listed.slice(0, limit)), [listed, limit]);
@@ -84,7 +109,7 @@ export function SessionsView() {
     );
   }
 
-  if (all.length === 0) {
+  if (merged.length === 0) {
     return (
       <Page>
         <PageHeader title="Sessions" />
@@ -103,15 +128,32 @@ export function SessionsView() {
         title="Sessions"
         lead={<Lead sessions={inRange} all={all} range={range} />}
         actions={
-          <Segmented
-            ariaLabel="Time range"
-            value={range}
-            options={RANGE_OPTIONS}
-            onChange={(r) => {
-              setRange(r);
-              setLimit(PAGE_SIZE);
-            }}
-          />
+          <span className="flex items-center gap-2">
+            {hosts.length > 0 && (
+              <Segmented
+                ariaLabel="Machine"
+                value={shownMachine}
+                options={[
+                  { value: ALL_MACHINES, label: "All machines" },
+                  { value: THIS_MACHINE, label: "This one" },
+                  ...hosts.map((h) => ({ value: h, label: h })),
+                ]}
+                onChange={(m) => {
+                  setMachine(m);
+                  setLimit(PAGE_SIZE);
+                }}
+              />
+            )}
+            <Segmented
+              ariaLabel="Time range"
+              value={range}
+              options={RANGE_OPTIONS}
+              onChange={(r) => {
+                setRange(r);
+                setLimit(PAGE_SIZE);
+              }}
+            />
+          </span>
         }
       />
 
@@ -151,7 +193,14 @@ export function SessionsView() {
                       session={s}
                       running={running.has(s.id)}
                       subagentsRunning={running.get(s.id) ?? 0}
-                      onOpen={() => navigateTo("session-replay", { id: s.id })}
+                      onOpen={() =>
+                        s.host
+                          ? toast.info(
+                              `This session ran on ${s.host}`,
+                              "Its transcript stays on that machine, so it can't be replayed here.",
+                            )
+                          : navigateTo("session-replay", { id: s.id })
+                      }
                     />
                   ))}
                 </div>
@@ -180,6 +229,8 @@ export function SessionsView() {
 
 function Lead({ sessions, all, range }: { sessions: Session[]; all: Session[]; range: Range }) {
   const n = sessions.length;
+  // Other machines' sessions don't replay here (their transcripts stay put).
+  const hint = all.some((s) => !s.host) ? " Click one to replay it." : "";
   if (range === "all") {
     const first = Math.min(...all.map((s) => s.startTs));
     const since = new Date(first).toLocaleDateString(undefined, {
@@ -189,7 +240,7 @@ function Lead({ sessions, all, range }: { sessions: Session[]; all: Session[]; r
     });
     return (
       <>
-        <b>{plural(n, "session")}</b> since {since}. Click one to replay it.
+        <b>{plural(n, "session")}</b> since {since}.{hint}
       </>
     );
   }
@@ -202,7 +253,7 @@ function Lead({ sessions, all, range }: { sessions: Session[]; all: Session[]; r
         : `, about ${Math.max(1, Math.round(perDay * 7))} a week`;
   return (
     <>
-      <b>{plural(n, "session")}</b> in the last {range} days{rate}. Click one to replay it.
+      <b>{plural(n, "session")}</b> in the last {range} days{rate}.{hint}
     </>
   );
 }
@@ -219,6 +270,8 @@ function SessionRow({
   onOpen: () => void;
 }) {
   const meta = sessionMeta(s);
+  // Nodes leave prompts out by default, so a remote row is named for its repo.
+  const title = s.host && !s.firstPrompt ? (meta.repo ?? "Untitled session") : sessionTitle(s);
   return (
     <button
       type="button"
@@ -228,7 +281,7 @@ function SessionRow({
       <ProviderIcon provider="claude" size={14} className="text-amber-600 dark:text-amber-400" />
       <span className="flex min-w-0 flex-col gap-px">
         <span className="flex min-w-0 items-center gap-[7px] text-[13.5px] text-zinc-900 dark:text-zinc-100">
-          <span className="truncate">{sessionTitle(s)}</span>
+          <span className="truncate">{title}</span>
           {running && (
             <Pill tone="green" className="shrink-0">
               Running
@@ -237,7 +290,13 @@ function SessionRow({
         </span>
         <span className="truncate text-xs text-zinc-500 dark:text-zinc-400">
           {[
-            meta.repo,
+            s.host && (
+              <span key="h" title={`Ran on ${s.host}`}>
+                <Monitor size={11} strokeWidth={2} className="mb-px mr-0.5 inline" />
+                {s.host}
+              </span>
+            ),
+            title !== meta.repo && meta.repo,
             meta.branch && (
               <span key="b" className="font-mono text-[11.5px]">
                 {meta.branch}
@@ -274,7 +333,7 @@ function SessionRow({
       >
         {s.costUsd > 0 ? formatUsd(s.costUsd) : "—"}
       </span>
-      <ChevronRight size={12} strokeWidth={2.25} className="text-zinc-400" />
+      {s.host ? <span /> : <ChevronRight size={12} strokeWidth={2.25} className="text-zinc-400" />}
     </button>
   );
 }

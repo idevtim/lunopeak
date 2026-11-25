@@ -1786,7 +1786,7 @@ fn extract_rate_limits_json(body: &str) -> Option<&str> {
 /// installed browser, the headline is replaced with the real plan utilization
 /// from `cursor.com/api/usage-summary` and the weekly slot is repurposed to
 /// show on-demand (overage) spend. SQLite data still provides the chat count.
-pub(crate) fn cursor_usage(web_enabled: bool) -> Option<ProviderUsage> {
+pub fn cursor_usage(web_enabled: bool) -> Option<ProviderUsage> {
     use rusqlite::{Connection, OpenFlags};
 
     // Gate on the actual Cursor app being installed. The state DB can linger

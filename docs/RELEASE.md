@@ -300,7 +300,7 @@ Once the pubkey + endpoint are wired in, the in-app updater works like this:
 The relevant code:
 
 - `src-tauri/src/lib.rs` — registers `tauri_plugin_updater`
-- `src-tauri/src/models.rs` — `GeneralPrefs.{check_updates, auto_install_updates, update_prompt_seen}`
+- `src-tauri/crates/core/src/models.rs` — `GeneralPrefs.{check_updates, auto_install_updates, update_prompt_seen}`
 - `src/components/UpdateAutoCheckPrompt.tsx` — first-run modal
 - `src/components/UpdateBanner.tsx` — background check + banner + auto-install path
 - `src/views/settings/SettingsView.tsx` (`GeneralCard`) — both toggles

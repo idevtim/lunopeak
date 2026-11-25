@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime};
 /// Only consider transcript files modified within this window. Ten minutes is
 /// loose enough to capture sessions that just paused for thinking, tight
 /// enough that we never re-parse historical chats.
-pub(crate) const RECENT_WINDOW: Duration = Duration::from_secs(10 * 60);
+pub const RECENT_WINDOW: Duration = Duration::from_secs(10 * 60);
 
 /// Hard cap on feed length so we never ship a runaway payload to the UI.
 const MAX_FEED: usize = 100;
@@ -79,6 +79,7 @@ fn collect_in(root: &Path, limit: usize) -> LiveActivity {
             continue;
         }
         let entry = sessions.entry(sid.clone()).or_insert_with(|| SessionLiveState {
+            host: None,
             // The main chat can sit quiet for the whole run of a foreground
             // subagent; the session is still live, so stand one up.
             session_id: sid.clone(),
@@ -219,6 +220,7 @@ fn parse_recent(
             let summary = summarize_tool(&tool, &input);
             let sid = session_id.clone().unwrap_or_default();
             events.push(LiveEvent {
+                host: None,
                 ts,
                 session_id: sid,
                 cwd: cwd.clone(),
@@ -239,6 +241,7 @@ fn parse_recent(
     sessions.insert(
         sid.clone(),
         SessionLiveState {
+            host: None,
             session_id: sid,
             cwd,
             last_ts,
@@ -271,14 +274,14 @@ struct SubagentRunScan {
 /// (not false) while it runs; `model` is often missing, with the effort
 /// picker's choice in `pickedEffortModel`.
 #[derive(Default)]
-pub(crate) struct SubagentMeta {
+pub struct SubagentMeta {
     pub agent_type: Option<String>,
     pub description: Option<String>,
     pub model: Option<String>,
     pub finished: bool,
 }
 
-pub(crate) fn read_subagent_meta(transcript: &Path) -> SubagentMeta {
+pub fn read_subagent_meta(transcript: &Path) -> SubagentMeta {
     let Some(raw) = std::fs::read_to_string(transcript.with_extension("meta.json")).ok() else {
         return SubagentMeta::default();
     };
@@ -300,7 +303,7 @@ pub(crate) fn read_subagent_meta(transcript: &Path) -> SubagentMeta {
 }
 
 /// `agent-<id>.jsonl` → `<id>`.
-pub(crate) fn subagent_id(transcript: &Path) -> Option<String> {
+pub fn subagent_id(transcript: &Path) -> Option<String> {
     let stem = transcript.file_stem()?.to_str()?;
     Some(stem.strip_prefix("agent-").unwrap_or(stem).to_string())
 }
@@ -410,6 +413,7 @@ fn scan_subagent(path: &Path) -> Option<SubagentRunScan> {
             let input = block.get("input").cloned().unwrap_or(serde_json::Value::Null);
             let summary = summarize_tool(tool, &input);
             events.push(LiveEvent {
+                host: None,
                 ts,
                 session_id: String::new(),
                 cwd: cwd.clone(),
@@ -446,7 +450,7 @@ fn scan_subagent(path: &Path) -> Option<SubagentRunScan> {
 
 /// Subagents still running under the session whose main transcript is
 /// `transcript` — the `<session-id>/subagents/` folder beside it.
-pub(crate) fn running_subagents(transcript: &Path) -> u32 {
+pub fn running_subagents(transcript: &Path) -> u32 {
     let cutoff = SystemTime::now()
         .checked_sub(RECENT_WINDOW)
         .unwrap_or(SystemTime::UNIX_EPOCH);
@@ -553,6 +557,7 @@ pub fn contexts() -> Vec<LiveContext> {
             _ => used.map(|u| claude_context_window(model.as_deref().unwrap_or(""), u)),
         };
         out.push(LiveContext {
+            host: None,
             agent: "claude".to_string(),
             session_id: session_id.to_string(),
             pid: Some(pid),
@@ -579,7 +584,7 @@ fn is_temp_path(path: &str) -> bool {
         || (cfg!(unix) && (p.starts_with("/tmp") || p.starts_with("/private/tmp")))
 }
 
-pub(crate) fn percent(used: u64, window: u64) -> f64 {
+pub fn percent(used: u64, window: u64) -> f64 {
     if window == 0 {
         return 0.0;
     }
@@ -667,7 +672,7 @@ fn parse_claude_turn(line: &str) -> Option<ClaudeTurn> {
 /// Transcripts don't record the window size, so infer it from the model: the
 /// current families run a 1M window, older ones 200k. A prompt already past
 /// 200k proves the session is on the 1M window whatever the model says.
-pub(crate) fn claude_context_window(model: &str, used: u64) -> u64 {
+pub fn claude_context_window(model: &str, used: u64) -> u64 {
     const STANDARD: u64 = 200_000;
     const EXTENDED: u64 = 1_000_000;
     let m = model.to_lowercase();
@@ -690,7 +695,7 @@ pub(crate) fn claude_context_window(model: &str, used: u64) -> u64 {
 /// Read up to `max_bytes` from the end of `path`, split into complete lines.
 /// The first line is dropped when the read started mid-file, since it is
 /// almost certainly a fragment. Returns whether the whole file was covered.
-pub(crate) fn read_tail_lines(path: &Path, max_bytes: u64) -> (Vec<String>, bool) {
+pub fn read_tail_lines(path: &Path, max_bytes: u64) -> (Vec<String>, bool) {
     let Ok(mut file) = File::open(path) else {
         return (Vec::new(), true);
     };
@@ -990,7 +995,7 @@ mod tests {
     }
 
     /// Prints live subagents on this machine.
-    /// `cargo test live_subagents_smoke -- --ignored --nocapture`
+    /// `cargo test -p lunopeak-core live_subagents_smoke -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn live_subagents_smoke() {
@@ -1009,7 +1014,7 @@ mod tests {
     }
 
     /// Prints the contexts for sessions running on this machine.
-    /// `cargo test live_contexts_smoke -- --ignored --nocapture`
+    /// `cargo test -p lunopeak-core live_contexts_smoke -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn live_contexts_smoke() {

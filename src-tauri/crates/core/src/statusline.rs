@@ -67,7 +67,7 @@ pub const CODEX_ITEMS: [&str; 5] = [
 
 /// Matches Tauri's `app_config_dir()` for our bundle identifier — this code
 /// also runs as a bare CLI with no `AppHandle` to ask.
-pub(crate) fn app_dir() -> Option<PathBuf> {
+pub fn app_dir() -> Option<PathBuf> {
     Some(dirs::config_dir()?.join("com.lunopeak.app"))
 }
 fn contexts_dir() -> Option<PathBuf> {
@@ -161,7 +161,7 @@ fn load_prefs() -> StatuslinePrefs {
 
 /// Data that isn't in Claude Code's stdin payload, read from the app's files.
 #[derive(Default)]
-pub(crate) struct Extras {
+pub struct Extras {
     /// Fallback 5h / weekly when stdin carries no `rate_limits` (it appears
     /// only after the session's first API response).
     five_hour: Option<Window>,
@@ -180,7 +180,7 @@ struct Window {
 }
 
 impl Extras {
-    pub(crate) fn load() -> Self {
+    pub fn load() -> Self {
         let now = now_secs();
         let mut out = Extras::default();
         if let Some(entry) = read_json(usage_cache_file()) {
@@ -301,7 +301,7 @@ fn piece(prefs: &StatuslinePrefs, f: impl FnOnce(&mut Line)) -> Vec<StatuslineSp
 /// data (a limit before the first response, cost with no snapshot) are
 /// skipped rather than shown empty — except context, which always holds its
 /// place so the line doesn't jump around at session start.
-pub(crate) fn render_spans(
+pub fn render_spans(
     input: &Value,
     extras: &Extras,
     prefs: &StatuslinePrefs,
@@ -439,7 +439,7 @@ pub(crate) fn render_spans(
 
 /// Wings down — the owl at rest. Same width as every flap frame so the rest
 /// of the line doesn't shift when a turn starts or ends.
-pub(crate) const OWL_IDLE: &str = "/{o,o}\\";
+pub const OWL_IDLE: &str = "/{o,o}\\";
 
 /// One frame per second while working: wings up, wings down, and a blink
 /// every sixth beat. Claude Code repaints once a second (`refreshInterval`),
@@ -559,7 +559,7 @@ fn turn_in_progress(lines: &[String]) -> Option<bool> {
 }
 
 /// Spans → terminal text. Dim is SGR 2; tones map to green / yellow / red.
-pub(crate) fn to_ansi(spans: &[StatuslineSpan], color: bool) -> String {
+pub fn to_ansi(spans: &[StatuslineSpan], color: bool) -> String {
     spans
         .iter()
         .map(|s| {
@@ -731,7 +731,7 @@ fn shell(cmd: &str) -> Command {
 
 /// Context window facts Claude Code reported for one session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct RecordedContext {
+pub struct RecordedContext {
     pub window_tokens: u64,
     pub used_tokens: Option<u64>,
     pub used_percent: Option<f64>,
@@ -812,7 +812,7 @@ fn prune_records(dir: &Path, now: i64) {
 }
 
 /// The last context facts the status line recorded for `session_id`.
-pub(crate) fn recorded_context(session_id: &str) -> Option<RecordedContext> {
+pub fn recorded_context(session_id: &str) -> Option<RecordedContext> {
     if !valid_session_id(session_id) {
         return None;
     }
@@ -826,7 +826,7 @@ static LAST_SNAPSHOT: AtomicI64 = AtomicI64::new(0);
 
 /// Record today's all-tools spend for the status line. `by_day` is the Costs
 /// page's 30-day series, oldest → newest, so its last bucket is today.
-pub(crate) fn write_snapshot(by_day: &[f64]) {
+pub fn write_snapshot(by_day: &[f64]) {
     let Some(path) = snapshot_file() else {
         return;
     };
@@ -842,7 +842,7 @@ pub(crate) fn write_snapshot(by_day: &[f64]) {
 
 /// Whether the menu-bar loop should re-scan costs for the snapshot: only
 /// when the Claude status line is installed, and at most every few minutes.
-pub(crate) fn snapshot_due() -> bool {
+pub fn snapshot_due() -> bool {
     now_secs() - LAST_SNAPSHOT.load(Ordering::Relaxed) >= SNAPSHOT_INTERVAL_SECS
         && claude_settings_file()
             .and_then(|p| read_claude_settings(&p).ok())

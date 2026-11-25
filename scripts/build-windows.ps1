@@ -238,11 +238,26 @@ foreach ($t in $Targets) {
 
   $sizeMB = [math]::Round($exe.Length / 1MB, 2)
   Write-Host "[OK] $($exe.Name) ($sizeMB MB)$(if ($sig) { ' + signed' } else { ' (unsigned)' })"
+
+  # lunopeak-node: shares a machine without the app. Version-free name so
+  # installers can always fetch releases/latest/download/<name>.
+  Write-Host "[*] Building lunopeak-node for $($t.Triple)..."
+  & cargo build --release -p lunopeak-node --target $t.Triple --manifest-path (Join-Path $ProjectDir 'src-tauri\Cargo.toml')
+  if ($LASTEXITCODE -ne 0) { Write-Host "[X] lunopeak-node build failed for $($t.Triple)"; exit 1 }
+  $nodeDir = Join-Path $bundleDir 'node'
+  New-Item -ItemType Directory -Force -Path $nodeDir | Out-Null
+  $nodeExe = Join-Path $ProjectDir "src-tauri\target\$($t.Triple)\release\lunopeak-node.exe"
+  $nodeZip = Join-Path $nodeDir "lunopeak-node-windows-$($t.Arch).zip"
+  if (Test-Path $nodeZip) { Remove-Item -Force $nodeZip }
+  Compress-Archive -Path $nodeExe -DestinationPath $nodeZip
+  Write-Host "[OK] $(Split-Path -Leaf $nodeZip)"
+
   $bundles += [pscustomobject]@{
     Exe      = $exe
     Sig      = $sig
     Arch     = $t.Arch
     RustArch = $t.RustArch
+    NodeZip  = $nodeZip
   }
 }
 
@@ -358,7 +373,10 @@ $assets = @()
 foreach ($b in $bundles) {
   $assets += $b.Exe.FullName
   if ($b.Sig) { $assets += $b.Sig.FullName }
+  $assets += $b.NodeZip
 }
+$assets += (Join-Path $PSScriptRoot 'install-node.sh')
+$assets += (Join-Path $PSScriptRoot 'install-node.ps1')
 if ($signingEnabled) { $assets += $latestJsonPath }
 
 if (-not $releaseExists) {

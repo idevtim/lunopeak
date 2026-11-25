@@ -306,6 +306,36 @@ pub struct Settings {
     /// settings.json by the `statusline` CLI on every repaint.
     #[serde(default)]
     pub statusline: StatuslinePrefs,
+    /// Other machines' sessions, published by `lunopeak-node`.
+    #[serde(default)]
+    pub remote: RemoteHubPrefs,
+    #[serde(default)]
+    pub share: SharePrefs,
+}
+
+/// Sharing this machine with LunoPeak on other computers, from the app
+/// itself (what `lunopeak-node --listen` does on a machine without it).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SharePrefs {
+    pub enabled: bool,
+    /// Name other machines see; the host name when unset.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Include prompt and chat text. Off by default.
+    #[serde(default)]
+    pub share_prompts: bool,
+}
+
+/// Where to find the snapshots `lunopeak-node` writes on other machines.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteHubPrefs {
+    pub enabled: bool,
+    /// The folder passed to the nodes as `--out` (synced to this machine by
+    /// Syncthing, iCloud, a network share…). Its `nodes/` subfolder is read.
+    #[serde(default)]
+    pub folder: Option<String>,
 }
 
 fn default_ollama_endpoint() -> String {
@@ -344,6 +374,8 @@ impl Default for Settings {
             tray: TrayPrefs::default(),
             editor: EditorPrefs::default(),
             statusline: StatuslinePrefs::default(),
+            remote: RemoteHubPrefs::default(),
+            share: SharePrefs::default(),
         }
     }
 }
@@ -520,9 +552,21 @@ pub struct TokenUsage {
 /// Branch → start of the minute (epoch ms) → spend in that minute.
 pub type BranchSpend = std::collections::BTreeMap<String, std::collections::BTreeMap<i64, f64>>;
 
+/// Start of a 15-minute UTC slot (epoch ms) → spend in it. Fine enough to
+/// re-bucket into any time zone's days (every offset is a multiple of 15 min).
+pub type SlotSpend = std::collections::BTreeMap<i64, f64>;
+
+/// Length of a [`SlotSpend`] slot.
+pub const SPEND_SLOT_MS: i64 = 15 * 60 * 1000;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
+    /// Machine this row came from: `None` for this machine, else the
+    /// reporting node's host name. Stamped when a node's snapshot is written
+    /// or read, never by the scanners themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub id: String,
     pub project_path: Option<String>,
     pub project_name: Option<String>,
@@ -544,6 +588,11 @@ pub struct Session {
     /// `src/types/api.ts` stays 1:1 with the serialized shape.
     #[serde(skip)]
     pub cost_by_day: std::collections::BTreeMap<chrono::NaiveDate, f64>,
+    /// The same spend in 15-minute UTC slots (`SlotSpend`). `cost_by_day` is
+    /// bucketed in this machine's time zone; a hub in another zone rebuilds
+    /// its days from these. Internal like `cost_by_day`.
+    #[serde(skip)]
+    pub cost_by_slot: SlotSpend,
     /// Subagent transcripts (`<id>/subagents/agent-*.jsonl`) rolled into this
     /// session. Their tokens and spend are already included in `usage` /
     /// `cost_usd`; `subagent_cost_usd` is that share, for display.
@@ -758,6 +807,11 @@ pub struct TranscriptMatch {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveEvent {
+    /// Machine this row came from: `None` for this machine, else the
+    /// reporting node's host name. Stamped when a node's snapshot is written
+    /// or read, never by the scanners themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub ts: i64,
     pub session_id: String,
     pub cwd: Option<String>,
@@ -785,6 +839,11 @@ pub struct LiveTodo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionLiveState {
+    /// Machine this row came from: `None` for this machine, else the
+    /// reporting node's host name. Stamped when a node's snapshot is written
+    /// or read, never by the scanners themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub session_id: String,
     pub cwd: Option<String>,
     pub last_ts: i64,
@@ -818,7 +877,7 @@ pub struct LiveSubagent {
     pub last_summary: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveActivity {
     pub feed: Vec<LiveEvent>,
@@ -832,6 +891,11 @@ pub struct LiveActivity {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveContext {
+    /// Machine this row came from: `None` for this machine, else the
+    /// reporting node's host name. Stamped when a node's snapshot is written
+    /// or read, never by the scanners themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     /// "claude" | "codex" | "cursor"
     pub agent: String,
     pub session_id: String,
@@ -897,6 +961,11 @@ pub struct CodexStatusline {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActiveProcess {
+    /// Machine this row came from: `None` for this machine, else the
+    /// reporting node's host name. Stamped when a node's snapshot is written
+    /// or read, never by the scanners themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub pid: u32,
     pub name: String,
     pub cwd: Option<String>,

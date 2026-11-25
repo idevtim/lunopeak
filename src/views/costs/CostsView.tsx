@@ -1,28 +1,40 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Coins, PiggyBank } from "lucide-react";
+import { Coins, Monitor, PiggyBank } from "lucide-react";
 import { queries } from "@/lib/queries";
 import { useDelayedLoading } from "@/hooks/useDelayedLoading";
 import { useHashRoute } from "@/hooks/useHashRoute";
 import { toast } from "@/stores/toastStore";
 import { Page, PageHeader, Card, CardHeader, Mono } from "@/components/ui/Page";
 import { Button } from "@/components/ui/Button";
+import { Segmented } from "@/components/ui/Segmented";
 import { StatCard } from "@/components/ui/StatCard";
 import { EmptyState, ErrorState } from "@/components/ui/PageStates";
 import { BarChart, type BarDatum } from "@/components/charts/BarChart";
 import { formatCount, formatUsd, plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { CostBreakdown, ModelUsage } from "@/types/api";
+import type { CostBreakdown, MachineCost, ModelUsage } from "@/types/api";
 import { CostsSkeleton } from "./CostsSkeleton";
 import { modelName, modelTone, monthDay } from "./costFormat";
 
 const PROJECT_ROWS = 3;
 const MODEL_ROWS = 4;
 
+type Scope = "all" | "local";
+const SCOPE_OPTIONS: { value: Scope; label: string }[] = [
+  { value: "all", label: "All machines" },
+  { value: "local", label: "This machine" },
+];
+
 export function CostsView() {
   const { navigateTo } = useHashRoute();
   const costs = useQuery(queries.costs);
   const settings = useQuery(queries.settings);
+  // Other machines' spend (lunopeak-node); null unless Settings → Other
+  // machines is on. Only this view counts it: the menu bar, status line and
+  // budget alerts stay this machine only.
+  const machineCosts = useQuery(queries.machineCosts);
+  const [scope, setScope] = useState<Scope>("all");
   const showSkeleton = useDelayedLoading(costs.isLoading);
 
   const editBudget = () => navigateTo("settings", { tab: "alerts" });
@@ -42,8 +54,9 @@ export function CostsView() {
   }
   if (!costs.data) return showSkeleton ? <CostsSkeleton /> : null;
 
-  const c = costs.data;
-  if (c.totalUsd <= 0 && c.byModel.length === 0) {
+  const multi = machineCosts.data && machineCosts.data.machines.length > 1 ? machineCosts.data : null;
+  const c = multi && scope === "all" ? multi.all : costs.data;
+  if (c.totalUsd <= 0 && c.byModel.length === 0 && !multi) {
     return (
       <Page>
         <PageHeader title="Costs" />
@@ -63,9 +76,17 @@ export function CostsView() {
       monthlyBudget={settings.data?.costBudget.monthlyUsd ?? 0}
       dailyBudget={settings.data?.costBudget.dailyUsd ?? 0}
       onEditBudget={editBudget}
-      onOpenRepo={(repo) => navigateTo("cost-detail", { repo })}
-      refreshing={costs.isFetching}
-      onRefresh={() => void costs.refetch()}
+      // Project detail reads this machine's logs only, so it opens from the
+      // this-machine scope.
+      onOpenRepo={multi && scope === "all" ? undefined : (repo) => navigateTo("cost-detail", { repo })}
+      refreshing={costs.isFetching || machineCosts.isFetching}
+      onRefresh={() => {
+        void costs.refetch();
+        void machineCosts.refetch();
+      }}
+      machines={multi?.machines ?? null}
+      scope={scope}
+      onScope={setScope}
     />
   );
 }
@@ -78,14 +99,21 @@ function Body({
   onOpenRepo,
   refreshing,
   onRefresh,
+  machines,
+  scope,
+  onScope,
 }: {
   c: CostBreakdown;
   monthlyBudget: number;
   dailyBudget: number;
   onEditBudget: () => void;
-  onOpenRepo: (repo: string) => void;
+  onOpenRepo?: (repo: string) => void;
   refreshing: boolean;
   onRefresh: () => void;
+  /** Every machine's spend, when other machines report in; else null. */
+  machines: MachineCost[] | null;
+  scope: Scope;
+  onScope: (s: Scope) => void;
 }) {
   const days = c.byDay;
   const today = days.at(-1) ?? 0;
@@ -125,9 +153,14 @@ function Body({
           />
         }
         actions={
-          <Button onClick={onEditBudget}>
-            {monthlyBudget > 0 || dailyBudget > 0 ? "Edit budget" : "Set a budget"}
-          </Button>
+          <span className="flex items-center gap-2">
+            {machines && (
+              <Segmented ariaLabel="Which machines" value={scope} options={SCOPE_OPTIONS} onChange={onScope} />
+            )}
+            <Button onClick={onEditBudget}>
+              {monthlyBudget > 0 || dailyBudget > 0 ? "Edit budget" : "Set a budget"}
+            </Button>
+          </span>
         }
       />
 
@@ -170,6 +203,8 @@ function Body({
         pace={pace}
       />
 
+      {machines && <MachinesCard machines={machines} dayOfMonth={dayOfMonth} />}
+
       <div className="grid grid-cols-2 gap-3">
         <ProjectsCard c={c} onOpenRepo={onOpenRepo} />
         <ModelsCard byModel={c.byModel} />
@@ -178,7 +213,9 @@ function Body({
       <SpendLess byModel={c.byModel} total={c.totalUsd} hasBudget={monthlyBudget > 0 || dailyBudget > 0} onEditBudget={onEditBudget} />
 
       <p className="m-0 text-xs text-zinc-500 dark:text-zinc-400">
-        Estimates from local session logs, across every agent. Actual billing may differ.{" "}
+        {machines
+          ? `Estimates from session logs on ${plural(machines.length, "machine")}, across every agent. Budget alerts count this machine only. Actual billing may differ. `
+          : "Estimates from local session logs, across every agent. Actual billing may differ. "}
         <Button variant="link" className="!py-0 text-xs" onClick={onRefresh} disabled={refreshing}>
           {refreshing ? "Refreshing…" : "Refresh"}
         </Button>
@@ -431,7 +468,39 @@ function MeterRow({
   );
 }
 
-function ProjectsCard({ c, onOpenRepo }: { c: CostBreakdown; onOpenRepo: (repo: string) => void }) {
+function MachinesCard({ machines, dayOfMonth }: { machines: MachineCost[]; dayOfMonth: number }) {
+  const rows = machines.map((m) => ({
+    ...m,
+    month: sum(m.byDay.slice(-dayOfMonth)),
+    week: sum(m.byDay.slice(-7)),
+  }));
+  const max = Math.max(0.0001, ...rows.map((r) => r.month));
+  return (
+    <Card className="flex flex-col pb-4">
+      <CardHeader title="By machine" />
+      <div className="flex flex-col gap-2 px-[18px]">
+        {rows.map((r) => (
+          <MeterRow
+            key={r.host ?? ""}
+            label={
+              <span className="flex items-center gap-1.5">
+                <Monitor size={12} strokeWidth={2} className="shrink-0 text-zinc-400" />
+                {r.host ? <Mono className="text-[12.5px]">{r.host}</Mono> : "This machine"}
+              </span>
+            }
+            sub={`${formatUsd(r.week, true)} last 7 days`}
+            pct={(r.month / max) * 100}
+            barClassName={r.host ? "bg-violet-500" : "bg-blue-500"}
+            value={formatUsd(r.month, true)}
+            title={`This month. ${formatUsd(r.totalUsd, true)} all time across ${plural(r.sessions, "session")}.`}
+          />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function ProjectsCard({ c, onOpenRepo }: { c: CostBreakdown; onOpenRepo?: (repo: string) => void }) {
   const top = c.byRepo.slice(0, PROJECT_ROWS);
   const rest = c.byRepo.slice(PROJECT_ROWS);
   const restUsd = sum(rest.map((r) => r.costUsd));
@@ -441,7 +510,8 @@ function ProjectsCard({ c, onOpenRepo }: { c: CostBreakdown; onOpenRepo: (repo: 
       <CardHeader
         title="By project"
         action={
-          top[0] && (
+          top[0] &&
+          onOpenRepo && (
             <Button variant="link" className="!py-0 text-xs" onClick={() => onOpenRepo(top[0].repoName)}>
               {top[0].repoName} details
             </Button>
@@ -456,7 +526,7 @@ function ProjectsCard({ c, onOpenRepo }: { c: CostBreakdown; onOpenRepo: (repo: 
             pct={(r.costUsd / max) * 100}
             barClassName="bg-blue-500"
             value={formatUsd(r.costUsd)}
-            onClick={() => onOpenRepo(r.repoName)}
+            onClick={onOpenRepo && (() => onOpenRepo(r.repoName))}
             title={`${plural(r.sessions, "session")} · ${formatCount(r.messages)} messages`}
           />
         ))}

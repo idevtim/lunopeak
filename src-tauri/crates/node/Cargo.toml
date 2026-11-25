@@ -1,0 +1,12 @@
+[package]
+name = "lunopeak-node"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.90"
+publish = false
+
+[dependencies]
+lunopeak-core = { path = "../core" }
+serde = "1"
+serde_json = "1"
+dirs = "5"
