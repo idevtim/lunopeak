@@ -1,7 +1,7 @@
 //! `lunopeak-node`: runs LunoPeak's provider scanners on this machine and
 //! publishes what they find for a LunoPeak hub on another machine to show.
 //!
-//! It writes `<out>/nodes/<host>/live.json` and `sessions.json` (see
+//! It writes `<out>/nodes/<machine id>/live.json` and `sessions.json` (see
 //! `lunopeak_core::node_wire`). Point `--out` at a folder that Syncthing,
 //! iCloud Drive, Dropbox or a network share keeps in sync with the hub. No
 //! GUI, no network calls of its own, no credentials: it only reads the agents'
@@ -24,9 +24,10 @@ USAGE:
 
 OPTIONS:
     --out <DIR>               Shared folder the hub reads (Syncthing, iCloud, a
-                              network share...). Files go to DIR/nodes/<host>/.
-    --host <NAME>             Name shown in the hub [default: this machine's
-                              host name]
+                              network share...). Files go to
+                              DIR/nodes/<machine id>/.
+    --name <NAME>             Name shown in the hub [default: this machine's
+                              host name]. --host is accepted too.
     --interval <SECS>         How often to read live activity [default: 5]
     --sessions-interval <SECS>
                               How often to re-scan session history [default: 60]
@@ -46,7 +47,9 @@ const HEARTBEAT: Duration = Duration::from_secs(60);
 
 struct Args {
     out: PathBuf,
-    host: String,
+    name: String,
+    /// Filled in by `main` from the app dir, so parsing stays side-effect free.
+    machine_id: String,
     interval: Duration,
     sessions_interval: Duration,
     share_prompts: bool,
@@ -65,7 +68,19 @@ fn main() {
     if let Some(dir) = lunopeak_core::statusline::app_dir() {
         lunopeak_core::logger::init_at(&dir.join("node-logs"), "LunoPeak node");
     }
-    let dir = args.out.join(node_wire::NODES_DIR).join(&args.host);
+    let mut args = args;
+    let Some(app_dir) = lunopeak_core::statusline::app_dir() else {
+        eprintln!("lunopeak-node: couldn't find a config folder to keep this machine's id in");
+        std::process::exit(1);
+    };
+    args.machine_id = match node_wire::machine_id(&app_dir) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("lunopeak-node: couldn't read or create this machine's id: {e}");
+            std::process::exit(1);
+        }
+    };
+    let dir = args.out.join(node_wire::NODES_DIR).join(&args.machine_id);
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("lunopeak-node: can't create {}: {e}", dir.display());
         std::process::exit(1);
@@ -73,7 +88,7 @@ fn main() {
     eprintln!(
         "lunopeak-node {}: publishing as \"{}\" to {}{}",
         lunopeak_core::VERSION,
-        args.host,
+        args.name,
         dir.display(),
         if args.share_prompts {
             " (with prompt text)"
@@ -139,7 +154,7 @@ fn collect_live(src: Sources, args: &Args) -> LiveData {
     if !args.share_prompts {
         node_wire::redact_live(&mut data);
     }
-    node_wire::stamp_live(&mut data, &args.host);
+    node_wire::stamp_live(&mut data, &args.name);
     data
 }
 
@@ -171,7 +186,7 @@ fn collect_sessions(
             if !args.share_prompts {
                 node_wire::redact_session(&mut s);
             }
-            s.host = Some(args.host.clone());
+            s.host = Some(args.name.clone());
             RemoteSession::new(agent, s)
         })
         .collect();
@@ -210,7 +225,8 @@ impl Publisher {
         }
         let envelope = Envelope {
             schema: node_wire::SCHEMA,
-            host: args.host.clone(),
+            machine_id: args.machine_id.clone(),
+            name: args.name.clone(),
             node_version: lunopeak_core::VERSION.to_string(),
             os: std::env::consts::OS.to_string(),
             generated_at: now_ms(),
@@ -266,7 +282,7 @@ fn now_ms() -> i64 {
 /// `Ok(None)` means help or version was printed and there's nothing to run.
 fn parse_args(raw: Vec<String>) -> Result<Option<Args>, String> {
     let mut out = None;
-    let mut host = None;
+    let mut name = None;
     let mut interval = 5;
     let mut sessions_interval = 60;
     let mut share_prompts = false;
@@ -294,7 +310,7 @@ fn parse_args(raw: Vec<String>) -> Result<Option<Args>, String> {
                 return Ok(None);
             }
             "--out" => out = Some(PathBuf::from(value("--out")?)),
-            "--host" => host = Some(value("--host")?),
+            "--name" | "--host" => name = Some(value(&flag)?),
             "--interval" => interval = secs(&value("--interval")?, "--interval")?,
             "--sessions-interval" => {
                 sessions_interval = secs(&value("--sessions-interval")?, "--sessions-interval")?
@@ -306,16 +322,14 @@ fn parse_args(raw: Vec<String>) -> Result<Option<Args>, String> {
     }
 
     let out = out.ok_or("--out <DIR> is required")?;
-    let host = match host {
-        Some(h) => node_wire::sanitize_host(&h)
-            .ok_or_else(|| format!("host name {h:?} has no usable characters"))?,
-        None => {
-            node_wire::local_host().ok_or("couldn't read this machine's host name; pass --host")?
-        }
+    let name = match name {
+        Some(n) => node_wire::clean_name(&n).ok_or_else(|| format!("name {n:?} is empty"))?,
+        None => node_wire::default_name().ok_or("couldn't read this machine's host name; pass --name")?,
     };
     Ok(Some(Args {
         out,
-        host,
+        name,
+        machine_id: String::new(),
         interval: Duration::from_secs(interval),
         sessions_interval: Duration::from_secs(sessions_interval),
         share_prompts,

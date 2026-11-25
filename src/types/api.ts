@@ -164,6 +164,10 @@ export interface RemoteHubPrefs {
 
 /** One machine publishing through `lunopeak-node`. Mirrors `hub::RemoteNode`. */
 export interface RemoteNode {
+  /** Random id the machine keeps in its app folder; its folder under `nodes/`. */
+  machineId: string;
+  /** Name to show, and the `host` on its rows. Unique: two machines with the
+   * same name get the start of their id appended. */
   host: string;
   os: string | null;
   nodeVersion: string | null;

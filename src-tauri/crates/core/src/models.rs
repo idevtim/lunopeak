@@ -535,6 +535,13 @@ pub struct TokenUsage {
 /// Branch → start of the minute (epoch ms) → spend in that minute.
 pub type BranchSpend = std::collections::BTreeMap<String, std::collections::BTreeMap<i64, f64>>;
 
+/// Start of a 15-minute UTC slot (epoch ms) → spend in it. Fine enough to
+/// re-bucket into any time zone's days (every offset is a multiple of 15 min).
+pub type SlotSpend = std::collections::BTreeMap<i64, f64>;
+
+/// Length of a [`SlotSpend`] slot.
+pub const SPEND_SLOT_MS: i64 = 15 * 60 * 1000;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
@@ -564,6 +571,11 @@ pub struct Session {
     /// `src/types/api.ts` stays 1:1 with the serialized shape.
     #[serde(skip)]
     pub cost_by_day: std::collections::BTreeMap<chrono::NaiveDate, f64>,
+    /// The same spend in 15-minute UTC slots (`SlotSpend`). `cost_by_day` is
+    /// bucketed in this machine's time zone; a hub in another zone rebuilds
+    /// its days from these. Internal like `cost_by_day`.
+    #[serde(skip)]
+    pub cost_by_slot: SlotSpend,
     /// Subagent transcripts (`<id>/subagents/agent-*.jsonl`) rolled into this
     /// session. Their tokens and spend are already included in `usage` /
     /// `cost_usd`; `subagent_cost_usd` is that share, for display.

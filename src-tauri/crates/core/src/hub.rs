@@ -1,12 +1,17 @@
 //! The hub side of `node_wire`: reads what `lunopeak-node`s on other machines
-//! published under `<root>/nodes/<host>/` and hands it to the app.
+//! published under `<root>/nodes/<machine id>/` and hands it to the app.
 //!
 //! Everything read here is treated as untrusted input from another machine:
-//! only the exact file names are read, files over a size cap are refused, the
-//! envelope's schema and host are checked before the payload is parsed, and
-//! every row's `host` is overwritten with the folder name. The hub's own host
+//! only folders named like a machine id are looked at, only the exact file
+//! names are read, files over a size cap are refused, the envelope's schema
+//! and machine id are checked before the payload is parsed, and every row's
+//! `host` is overwritten with the machine's label. The hub's own machine id
 //! is skipped (a node on this machine would duplicate local data), and a
 //! session id seen locally or on an earlier node is dropped.
+//!
+//! A machine's label is the name it publishes. Names aren't unique, so when
+//! two machines share one, each gets the start of its id appended; the views
+//! key rows by label, so labels must never collide.
 //!
 //! Parsed files are cached by size and mtime, because the views that call in
 //! poll every few seconds and `sessions.json` is megabytes.
@@ -34,6 +39,9 @@ const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteNode {
+    pub machine_id: String,
+    /// Label for the UI and the `host` on its rows: its published name, made
+    /// unique across nodes.
     pub host: String,
     pub os: Option<String>,
     pub node_version: Option<String>,
@@ -117,7 +125,10 @@ pub fn machine_costs(local: &[Session], remote: &[Session]) -> MachineCosts {
 #[serde(rename_all = "camelCase")]
 struct Header {
     schema: u32,
-    host: String,
+    #[serde(default)]
+    machine_id: String,
+    #[serde(default)]
+    name: String,
     #[serde(default)]
     node_version: Option<String>,
     #[serde(default)]
@@ -135,6 +146,8 @@ struct Entry<T> {
     /// Hub clock: when this file's `generatedAt` last changed. On first
     /// sight, the file's mtime (a node that stopped yesterday isn't online).
     seen_change: SystemTime,
+    /// Published name, once the header checked out.
+    name: Option<String>,
     node_version: Option<String>,
     os: Option<String>,
     includes_prompts: bool,
@@ -155,13 +168,16 @@ pub struct Hub {
 
 /// One node folder after a refresh.
 struct NodeView {
-    host: String,
+    id: String,
+    /// Unique across the nodes of one refresh.
+    label: String,
     live: Option<EntryView<LiveData>>,
     sessions: Option<EntryView<SessionsData>>,
 }
 
 struct EntryView<T> {
     seen_change: SystemTime,
+    name: Option<String>,
     node_version: Option<String>,
     os: Option<String>,
     includes_prompts: bool,
@@ -173,11 +189,11 @@ impl Hub {
         Self::default()
     }
 
-    /// Every node folder under `root` except `skip_host` (this machine).
-    pub fn nodes(&self, root: &Path, skip_host: Option<&str>) -> Vec<RemoteNode> {
+    /// Every node folder under `root` except `skip_id` (this machine).
+    pub fn nodes(&self, root: &Path, skip_id: Option<&str>) -> Vec<RemoteNode> {
         let now = SystemTime::now();
         let mut out: Vec<RemoteNode> = self
-            .refresh(root, skip_host)
+            .refresh(root, skip_id)
             .into_iter()
             .map(|n| {
                 let live_ok = n.live.as_ref().filter(|l| l.result.is_ok());
@@ -197,7 +213,8 @@ impl Hub {
                             .map(|e| (&e.node_version, &e.os, e.includes_prompts))
                     });
                 RemoteNode {
-                    host: n.host,
+                    machine_id: n.id,
+                    host: n.label,
                     os: meta.and_then(|m| m.1.clone()),
                     node_version: meta.and_then(|m| m.0.clone()),
                     online,
@@ -217,17 +234,17 @@ impl Hub {
     }
 
     /// Live rows from every node whose live data is current.
-    pub fn live(&self, root: &Path, skip_host: Option<&str>) -> RemoteLive {
+    pub fn live(&self, root: &Path, skip_id: Option<&str>) -> RemoteLive {
         let now = SystemTime::now();
         let mut out = RemoteLive::default();
-        for n in self.refresh(root, skip_host) {
+        for n in self.refresh(root, skip_id) {
             let Some(live) = n.live else { continue };
             let Ok(data) = live.result else { continue };
             if !is_fresh(live.seen_change, now) {
                 continue;
             }
             let mut d = (*data).clone();
-            node_wire::stamp_live(&mut d, &n.host);
+            node_wire::stamp_live(&mut d, &n.label);
             out.activity.feed.append(&mut d.activity.feed);
             out.activity.sessions.append(&mut d.activity.sessions);
             out.contexts.append(&mut d.contexts);
@@ -247,62 +264,104 @@ impl Hub {
     pub fn sessions(
         &self,
         root: &Path,
-        skip_host: Option<&str>,
+        skip_id: Option<&str>,
         agent: &str,
         local_ids: &HashSet<String>,
     ) -> Vec<Session> {
-        let mut seen: HashSet<String> = HashSet::new();
         let mut out = Vec::new();
-        for n in self.refresh(root, skip_host) {
-            let Some(Ok(data)) = n.sessions.map(|e| e.result) else {
-                continue;
-            };
-            for r in data.sessions.iter().filter(|r| r.agent == agent) {
-                if local_ids.contains(&r.session.id) || !seen.insert(r.session.id.clone()) {
-                    continue;
-                }
+        self.each_new_session(root, skip_id, local_ids, |label, r| {
+            if r.agent == agent {
                 let mut s = r.clone().into_session();
-                s.host = Some(n.host.clone());
+                s.host = Some(label.to_string());
                 out.push(s);
             }
-        }
+        });
         out.sort_by_key(|s| std::cmp::Reverse(s.end_ts));
         out
     }
 
+    /// Label → how many sessions (any agent) that node adds: the ones
+    /// [`Hub::sessions`] would keep, counted without copying them.
+    pub fn added_session_counts(
+        &self,
+        root: &Path,
+        skip_id: Option<&str>,
+        local_ids: &HashSet<String>,
+    ) -> HashMap<String, usize> {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        self.each_new_session(root, skip_id, local_ids, |label, _| {
+            *counts.entry(label.to_string()).or_default() += 1;
+        });
+        counts
+    }
+
+    /// Call `f(label, session)` for each remote session whose id isn't in
+    /// `local_ids` and wasn't already seen on an earlier node.
+    fn each_new_session(
+        &self,
+        root: &Path,
+        skip_id: Option<&str>,
+        local_ids: &HashSet<String>,
+        mut f: impl FnMut(&str, &node_wire::RemoteSession),
+    ) {
+        let mut seen: HashSet<&str> = HashSet::new();
+        let nodes = self.refresh(root, skip_id);
+        let data: Vec<(&str, &SessionsData)> = nodes
+            .iter()
+            .filter_map(|n| {
+                let d = n.sessions.as_ref()?.result.as_ref().ok()?;
+                Some((n.label.as_str(), d.as_ref()))
+            })
+            .collect();
+        for (label, d) in data {
+            for r in &d.sessions {
+                let id = r.session.id.as_str();
+                if local_ids.contains(id) || !seen.insert(id) {
+                    continue;
+                }
+                f(label, r);
+            }
+        }
+    }
+
     /// Re-read whatever changed under `root/nodes/` and return every node.
-    fn refresh(&self, root: &Path, skip_host: Option<&str>) -> Vec<NodeView> {
+    fn refresh(&self, root: &Path, skip_id: Option<&str>) -> Vec<NodeView> {
         let dir = root.join(node_wire::NODES_DIR);
         let Ok(read) = std::fs::read_dir(&dir) else {
             return Vec::new();
         };
-        let mut hosts: Vec<String> = read
+        let mut ids: Vec<String> = read
             .flatten()
             .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
             .filter_map(|e| e.file_name().to_str().map(str::to_string))
             // Only folders a node could have made; skips `.stfolder`, junk.
-            .filter(|name| node_wire::sanitize_host(name).as_deref() == Some(name.as_str()))
-            .filter(|name| Some(name.as_str()) != skip_host)
+            .filter(|name| node_wire::is_machine_id(name))
+            .filter(|name| Some(name.as_str()) != skip_id)
             .collect();
-        hosts.sort();
+        ids.sort();
 
         let Ok(mut state) = self.state.lock() else {
             return Vec::new();
         };
         let mut keep_live = HashSet::new();
         let mut keep_sessions = HashSet::new();
-        let views = hosts
+        let mut views: Vec<NodeView> = ids
             .into_iter()
-            .map(|host| {
-                let folder = dir.join(&host);
+            .map(|id| {
+                let folder = dir.join(&id);
                 let live_path = folder.join(node_wire::LIVE_FILE);
                 let sessions_path = folder.join(node_wire::SESSIONS_FILE);
-                let live = load(&mut state.live, &live_path, &host);
-                let sessions = load(&mut state.sessions, &sessions_path, &host);
+                let live = load(&mut state.live, &live_path, &id);
+                let sessions = load(&mut state.sessions, &sessions_path, &id);
                 keep_live.insert(live_path);
                 keep_sessions.insert(sessions_path);
+                let name = live
+                    .as_ref()
+                    .and_then(|e| e.name.clone())
+                    .or_else(|| sessions.as_ref().and_then(|e| e.name.clone()));
                 NodeView {
-                    host,
+                    label: name.unwrap_or_else(|| "Unnamed machine".to_string()),
+                    id,
                     live,
                     sessions,
                 }
@@ -310,7 +369,30 @@ impl Hub {
             .collect();
         state.live.retain(|p, _| keep_live.contains(p));
         state.sessions.retain(|p, _| keep_sessions.contains(p));
+        unique_labels(&mut views);
         views
+    }
+}
+
+/// Append the start of the machine id to every label two nodes share
+/// (compared ignoring case, as a person reading the list would), using as
+/// many characters as it takes to tell that group apart (at least four).
+fn unique_labels(views: &mut [NodeView]) {
+    let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, v) in views.iter().enumerate() {
+        groups.entry(v.label.to_lowercase()).or_default().push(i);
+    }
+    for members in groups.values().filter(|m| m.len() > 1) {
+        let len = (4..=32)
+            .find(|&n| {
+                let prefixes: HashSet<&str> = members.iter().map(|&i| &views[i].id[..n]).collect();
+                prefixes.len() == members.len()
+            })
+            .unwrap_or(32);
+        for &i in members {
+            let v = &mut views[i];
+            v.label = format!("{} ({})", v.label, &v.id[..len]);
+        }
     }
 }
 
@@ -330,7 +412,7 @@ fn epoch_ms(t: SystemTime) -> i64 {
 fn load<T: DeserializeOwned>(
     cache: &mut HashMap<PathBuf, Entry<T>>,
     path: &Path,
-    host: &str,
+    id: &str,
 ) -> Option<EntryView<T>> {
     let Ok(meta) = std::fs::metadata(path) else {
         cache.remove(path);
@@ -343,12 +425,13 @@ fn load<T: DeserializeOwned>(
         .is_none_or(|e| e.mtime != mtime || e.len != len);
     if stale {
         let prev = cache.remove(path);
-        let entry = parse::<T>(path, host, mtime, len, prev.as_ref());
+        let entry = parse::<T>(path, id, mtime, len, prev.as_ref());
         cache.insert(path.to_path_buf(), entry);
     }
     let e = cache.get(path)?;
     Some(EntryView {
         seen_change: e.seen_change,
+        name: e.name.clone(),
         node_version: e.node_version.clone(),
         os: e.os.clone(),
         includes_prompts: e.includes_prompts,
@@ -358,7 +441,7 @@ fn load<T: DeserializeOwned>(
 
 fn parse<T: DeserializeOwned>(
     path: &Path,
-    host: &str,
+    id: &str,
     mtime: SystemTime,
     len: u64,
     prev: Option<&Entry<T>>,
@@ -368,6 +451,7 @@ fn parse<T: DeserializeOwned>(
         len,
         generated_at: 0,
         seen_change: prev.map_or(mtime, |p| p.seen_change),
+        name: None,
         node_version: None,
         os: None,
         includes_prompts: false,
@@ -407,14 +491,14 @@ fn parse<T: DeserializeOwned>(
         });
         return entry;
     }
-    if node_wire::sanitize_host(&header.host).as_deref() != Some(host) {
+    if header.machine_id != id {
         entry.result = Err(format!(
-            "{} says it's from {:?}, not {host:?}",
-            file_name(path),
-            header.host
+            "{} was copied from another machine's folder",
+            file_name(path)
         ));
         return entry;
     }
+    entry.name = node_wire::clean_name(&header.name);
     entry.result = serde_json::from_slice::<Envelope<T>>(&bytes)
         .map(|e| Arc::new(e.data))
         .map_err(|e| format!("{} couldn't be read: {e}", file_name(path)));
@@ -450,6 +534,7 @@ mod tests {
             usage: TokenUsage::default(),
             cost_usd: 1.0,
             cost_by_day: BTreeMap::new(),
+            cost_by_slot: Default::default(),
             subagent_count: 0,
             subagent_cost_usd: 0.0,
             cost_by_branch: Default::default(),
@@ -462,10 +547,21 @@ mod tests {
         }
     }
 
-    fn envelope<T: Serialize>(host: &str, schema: u32, data: T) -> String {
+    /// A machine id derived from a readable test name.
+    fn id(name: &str) -> String {
+        let hex: String = name.bytes().map(|b| format!("{b:02x}")).collect();
+        format!("{hex:0<32}")[..32].to_string()
+    }
+
+    fn envelope<T: Serialize>(name: &str, schema: u32, data: T) -> String {
+        envelope_as(&id(name), name, schema, data)
+    }
+
+    fn envelope_as<T: Serialize>(machine_id: &str, name: &str, schema: u32, data: T) -> String {
         serde_json::to_string(&Envelope {
             schema,
-            host: host.into(),
+            machine_id: machine_id.into(),
+            name: name.into(),
             node_version: "2.5.0".into(),
             os: "linux".into(),
             generated_at: 1,
@@ -475,8 +571,12 @@ mod tests {
         .unwrap()
     }
 
-    fn write(root: &Path, host: &str, file: &str, body: &str) -> PathBuf {
-        let dir = root.join("nodes").join(host);
+    fn write(root: &Path, name: &str, file: &str, body: &str) -> PathBuf {
+        write_in(root, &id(name), file, body)
+    }
+
+    fn write_in(root: &Path, folder: &str, file: &str, body: &str) -> PathBuf {
+        let dir = root.join("nodes").join(folder);
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join(file);
         std::fs::write(&p, body).unwrap();
@@ -516,20 +616,23 @@ mod tests {
         );
         let hub = Hub::new();
 
-        let live = hub.live(root.path(), Some("me"));
+        let me = id("me");
+        let live = hub.live(root.path(), Some(&me));
         assert_eq!(live.activity.feed.len(), 1);
         assert_eq!(live.activity.feed[0].tool, "Bash");
         assert_eq!(live.activity.feed[0].host.as_deref(), Some("box"));
 
-        let nodes = hub.nodes(root.path(), Some("me"));
+        let nodes = hub.nodes(root.path(), Some(&me));
         assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].machine_id, id("box"));
+        assert_eq!(nodes[0].host, "box");
         assert!(nodes[0].online);
         assert_eq!(nodes[0].problem, None);
         assert_eq!(nodes[0].os.as_deref(), Some("linux"));
     }
 
     #[test]
-    fn rejects_newer_schema_and_mismatched_host() {
+    fn rejects_newer_schema_and_mismatched_machine_id() {
         let root = tempfile::tempdir().unwrap();
         write(
             root.path(),
@@ -541,7 +644,7 @@ mod tests {
             root.path(),
             "liar",
             "live.json",
-            &envelope("someone-else", 1, live_with_event("Bash")),
+            &envelope_as(&id("someone-else"), "liar", 1, live_with_event("Bash")),
         );
         let hub = Hub::new();
         assert!(hub.live(root.path(), None).activity.feed.is_empty());
@@ -549,14 +652,14 @@ mod tests {
         let problem = |h: &str| {
             nodes
                 .iter()
-                .find(|n| n.host == h)
+                .find(|n| n.machine_id == id(h))
                 .unwrap()
                 .problem
                 .clone()
                 .unwrap()
         };
         assert!(problem("newer").contains("newer than this app"));
-        assert!(problem("liar").contains("someone-else"));
+        assert!(problem("liar").contains("another machine"));
     }
 
     #[test]
@@ -631,19 +734,44 @@ mod tests {
     #[test]
     fn ignores_folders_a_node_could_not_have_made() {
         let root = tempfile::tempdir().unwrap();
-        write(
-            root.path(),
-            ".stfolder",
-            "live.json",
-            &envelope(".stfolder", 1, live_with_event("Bash")),
-        );
-        write(
-            root.path(),
-            "Box",
-            "live.json",
-            &envelope("Box", 1, live_with_event("Bash")),
-        );
+        for folder in [".stfolder".to_string(), id("box").to_uppercase(), "box".into()] {
+            write_in(
+                root.path(),
+                &folder,
+                "live.json",
+                &envelope_as(&folder, "box", 1, live_with_event("Bash")),
+            );
+        }
         assert!(Hub::new().nodes(root.path(), None).is_empty());
+    }
+
+    #[test]
+    fn machines_sharing_a_name_get_distinct_labels() {
+        let root = tempfile::tempdir().unwrap();
+        let (a, b) = (id("a"), id("b"));
+        for (folder, sid) in [(&a, "s-a"), (&b, "s-b")] {
+            let data = SessionsData {
+                sessions: vec![RemoteSession::new("claude", session(sid, 1))],
+            };
+            write_in(
+                root.path(),
+                folder,
+                "sessions.json",
+                &envelope_as(folder, "MacBook-Pro", 1, data),
+            );
+        }
+        let hub = Hub::new();
+        let labels: Vec<String> = hub.nodes(root.path(), None).into_iter().map(|n| n.host).collect();
+        assert_eq!(labels.len(), 2);
+        assert_ne!(labels[0], labels[1]);
+        assert!(labels.iter().all(|l| l.starts_with("MacBook-Pro (")));
+        let counts = hub.added_session_counts(root.path(), None, &HashSet::new());
+        assert_eq!(counts.values().sum::<usize>(), 2);
+        assert_eq!(counts.len(), 2);
+        // Skipping one by id leaves the other, whose name is then unique.
+        let nodes = hub.nodes(root.path(), Some(&a));
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].host, "MacBook-Pro");
     }
 
     /// Read a real shared folder and print what the hub sees:
@@ -652,7 +780,7 @@ mod tests {
     #[ignore]
     fn hub_live() {
         let root = PathBuf::from(std::env::var("LUNOPEAK_HUB_ROOT").expect("LUNOPEAK_HUB_ROOT"));
-        let me = node_wire::local_host();
+        let me = node_wire::local_machine_id();
         let hub = Hub::new();
         let t = std::time::Instant::now();
         let nodes = hub.nodes(&root, me.as_deref());

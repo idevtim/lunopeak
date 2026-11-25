@@ -1142,12 +1142,13 @@ pub async fn get_live_contexts(
 // rows only reach the views that call these and know about `host`. The tray,
 // status line and budget alerts stay this-machine only.
 
-/// The shared folder to read and this machine's host (skipped), or `None`
+/// The shared folder to read and this machine's id (skipped), or `None`
 /// when reading other machines is off.
 fn remote_root(app: &AppHandle, cache: &SettingsCache) -> Option<(std::path::PathBuf, Option<String>)> {
     let s = cache.load(app).ok()?;
     let folder = s.remote.folder.filter(|f| s.remote.enabled && !f.trim().is_empty())?;
-    Some((std::path::PathBuf::from(folder), lunopeak_core::node_wire::local_host()))
+    // This machine's id, so a node running here isn't shown as another machine.
+    Some((std::path::PathBuf::from(folder), lunopeak_core::node_wire::local_machine_id()))
 }
 
 #[tauri::command]
@@ -1171,14 +1172,7 @@ pub async fn get_remote_nodes(
         let ids: std::collections::HashSet<String> = local.into_iter().map(|s| s.id).collect();
         // Count what each node actually adds, not what it published: sessions
         // this machine (or an earlier node) already has are dropped.
-        let mut added: std::collections::HashMap<String, usize> = Default::default();
-        for agent in ["claude", "codex"] {
-            for s in hub.sessions(&root, me.as_deref(), agent, &ids) {
-                if let Some(h) = s.host {
-                    *added.entry(h).or_default() += 1;
-                }
-            }
-        }
+        let added = hub.added_session_counts(&root, me.as_deref(), &ids);
         let mut nodes = hub.nodes(&root, me.as_deref());
         for n in &mut nodes {
             n.sessions = added.get(&n.host).copied().unwrap_or(0);

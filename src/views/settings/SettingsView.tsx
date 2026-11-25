@@ -788,7 +788,7 @@ function OtherMachines({ s, update }: { s: Settings; update: Update }) {
           ) : (
             <ul className="m-0 flex list-none flex-col gap-2 p-0">
               {list.map((n) => (
-                <li key={n.host} className="flex flex-col gap-0.5">
+                <li key={n.machineId} className="flex flex-col gap-0.5">
                   <span className="flex items-center gap-2 text-[13px] text-zinc-900 dark:text-zinc-100">
                     <span className="font-mono">{n.host}</span>
                     {n.online ? <Pill tone="green">Online</Pill> : <Pill>Offline</Pill>}

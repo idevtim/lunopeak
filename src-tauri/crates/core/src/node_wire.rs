@@ -1,7 +1,7 @@
 //! What a `lunopeak-node` writes for the hub (the desktop app) to read.
 //!
 //! A node publishes two files per machine, at different cadences, under
-//! `<root>/nodes/<host>/`:
+//! `<root>/nodes/<machine id>/`:
 //!
 //! - `live.json`: what's running right now (activity feed, per-session
 //!   state, context fill, agent processes). Rewritten when it changes, plus a
@@ -14,13 +14,21 @@
 //! hub can skip snapshots from a node too new (or too old) to understand.
 //! Transcripts are never published; replay stays on the machine that ran the
 //! session.
+//!
+//! Machines are told apart by a random id kept in the app dir
+//! ([`machine_id`]), not by host name: two laptops both called "MacBook-Pro"
+//! would otherwise write into one folder and each hide the other as itself.
+//! The app and a node on the same machine share the id, so a hub never shows
+//! its own machine twice. The name shown in the UI travels in the envelope.
 
 use std::collections::BTreeMap;
+use std::io::Write;
+use std::path::Path;
 
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
-use crate::models::{ActiveProcess, BranchSpend, LiveActivity, LiveContext, Session};
+use crate::models::{ActiveProcess, BranchSpend, LiveActivity, LiveContext, Session, SlotSpend};
 
 /// Bump on any change a hub of the previous version would misread.
 pub const SCHEMA: u32 = 1;
@@ -29,13 +37,20 @@ pub const LIVE_FILE: &str = "live.json";
 pub const SESSIONS_FILE: &str = "sessions.json";
 /// Subfolder of the shared root holding one folder per node.
 pub const NODES_DIR: &str = "nodes";
+/// File in the app dir holding this machine's id.
+pub const MACHINE_ID_FILE: &str = "machine-id";
+/// Longest display name kept, in characters.
+const MAX_NAME_CHARS: usize = 40;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Envelope<T> {
     pub schema: u32,
-    /// Sanitized host name; also the folder name under `nodes/`.
-    pub host: String,
+    /// The node's [`machine_id`]; also its folder name under `nodes/`.
+    pub machine_id: String,
+    /// Name to show for the machine ([`clean_name`]d). Not unique: the hub
+    /// tells apart two machines with the same name.
+    pub name: String,
     /// LunoPeak release the node was built from.
     pub node_version: String,
     /// `std::env::consts::OS` of the node ("macos", "linux", "windows").
@@ -73,8 +88,11 @@ pub struct RemoteSession {
     pub agent: String,
     #[serde(flatten)]
     pub session: Session,
+    /// Days in the node's time zone. Only used when `cost_by_slot` is empty.
     #[serde(default)]
     pub cost_by_day: BTreeMap<NaiveDate, f64>,
+    #[serde(default)]
+    pub cost_by_slot: SlotSpend,
     #[serde(default)]
     pub cost_by_branch: BranchSpend,
 }
@@ -82,19 +100,27 @@ pub struct RemoteSession {
 impl RemoteSession {
     pub fn new(agent: &str, session: Session) -> Self {
         let cost_by_day = session.cost_by_day.clone();
+        let cost_by_slot = session.cost_by_slot.clone();
         let cost_by_branch = session.cost_by_branch.clone();
         RemoteSession {
             agent: agent.to_string(),
             session,
             cost_by_day,
+            cost_by_slot,
             cost_by_branch,
         }
     }
 
-    /// Back to a full `Session`, with the spend breakdowns restored.
+    /// Back to a full `Session`, with the spend breakdowns restored and its
+    /// days rebuilt in this machine's time zone.
     pub fn into_session(self) -> Session {
         let mut s = self.session;
-        s.cost_by_day = self.cost_by_day;
+        s.cost_by_day = if self.cost_by_slot.is_empty() {
+            self.cost_by_day
+        } else {
+            crate::scanners::sessions::days_from_slots(&self.cost_by_slot)
+        };
+        s.cost_by_slot = self.cost_by_slot;
         s.cost_by_branch = self.cost_by_branch;
         s
     }
@@ -104,35 +130,69 @@ fn default_agent() -> String {
     "claude".to_string()
 }
 
-/// This machine's name as a node would publish it: the first label of the
-/// OS host name ("tims-mbp.localdomain" -> "tims-mbp"), sanitized. The hub
-/// uses the same function to skip its own folder.
-pub fn local_host() -> Option<String> {
-    let full = sysinfo::System::host_name()?;
-    sanitize_host(full.split('.').next().unwrap_or(&full))
+/// This machine's id, created on first use: 32 lowercase hex characters in
+/// `<app_dir>/machine-id`. The window, the menu-bar process and a node can
+/// all race to create it, so the first `create_new` wins and the rest read.
+pub fn machine_id(app_dir: &Path) -> std::io::Result<String> {
+    let path = app_dir.join(MACHINE_ID_FILE);
+    let read = |path: &Path| -> std::io::Result<String> {
+        let id = std::fs::read_to_string(path)?.trim().to_string();
+        if is_machine_id(&id) {
+            Ok(id)
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("{} doesn't hold a machine id", path.display()),
+            ))
+        }
+    };
+    if let Ok(id) = read(&path) {
+        return Ok(id);
+    }
+    std::fs::create_dir_all(app_dir)?;
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(mut f) => {
+            f.write_all(id.as_bytes())?;
+            Ok(id)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            // Another process got there first; give it a moment to write.
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            read(&path)
+        }
+        Err(e) => Err(e),
+    }
 }
 
-/// A host name safe to use as a folder name and a UI label: lowercase ASCII
-/// letters, digits, `-` and `_`, with a trailing `.local` / `.lan` dropped.
-/// Returns `None` when nothing usable is left.
-pub fn sanitize_host(raw: &str) -> Option<String> {
-    let lower = raw.trim().to_lowercase();
-    let base = lower
-        .strip_suffix(".local")
-        .or_else(|| lower.strip_suffix(".lan"))
-        .unwrap_or(&lower);
-    let cleaned: String = base
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '-'
-            }
-        })
+/// [`machine_id`] in the app dir this build uses.
+pub fn local_machine_id() -> Option<String> {
+    machine_id(&crate::statusline::app_dir()?).ok()
+}
+
+/// Whether `s` is shaped like a [`machine_id`], so a folder or envelope
+/// field can be trusted as a path component.
+pub fn is_machine_id(s: &str) -> bool {
+    s.len() == 32 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// The name a machine goes by unless one is chosen: the first label of the
+/// OS host name ("Tims-MBP.localdomain" -> "Tims-MBP").
+pub fn default_name() -> Option<String> {
+    let full = sysinfo::System::host_name()?;
+    clean_name(full.split('.').next().unwrap_or(&full))
+}
+
+/// A display name safe to show: control characters dropped, runs of
+/// whitespace collapsed, at most 40 characters. `None` when nothing is left.
+pub fn clean_name(raw: &str) -> Option<String> {
+    let words: Vec<&str> = raw
+        .split(|c: char| c.is_whitespace() || c.is_control())
+        .filter(|w| !w.is_empty())
         .collect();
-    let trimmed = cleaned.trim_matches('-');
-    (!trimmed.is_empty()).then(|| trimmed.chars().take(63).collect())
+    let joined: String = words.join(" ").chars().take(MAX_NAME_CHARS).collect();
+    let trimmed = joined.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 /// Stamp `host` on every row of a live snapshot.
@@ -210,17 +270,20 @@ mod tests {
     use crate::models::{ActiveProcess, LiveEvent, LiveTodo, SessionLiveState, TokenUsage};
 
     #[test]
-    fn sanitizes_host_names() {
-        assert_eq!(
-            sanitize_host("Tims-MacBook-Pro.local").as_deref(),
-            Some("tims-macbook-pro")
-        );
-        assert_eq!(
-            sanitize_host("build box (2)").as_deref(),
-            Some("build-box--2")
-        );
-        assert_eq!(sanitize_host("  ").as_deref(), None);
-        assert_eq!(sanitize_host("../etc").as_deref(), Some("etc"));
+    fn cleans_display_names() {
+        assert_eq!(clean_name("  Build\tbox\n(2) ").as_deref(), Some("Build box (2)"));
+        assert_eq!(clean_name(" \u{7}  "), None);
+        assert_eq!(clean_name(&"x".repeat(100)).map(|n| n.len()), Some(40));
+    }
+
+    #[test]
+    fn machine_id_is_created_once_and_reused() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = machine_id(dir.path()).unwrap();
+        assert!(is_machine_id(&id));
+        assert_eq!(machine_id(dir.path()).unwrap(), id);
+        assert!(!is_machine_id("../etc"));
+        assert!(!is_machine_id(&id.to_uppercase()));
     }
 
     fn session() -> Session {
@@ -238,6 +301,7 @@ mod tests {
             usage: TokenUsage::default(),
             cost_usd: 1.5,
             cost_by_day: BTreeMap::new(),
+            cost_by_slot: Default::default(),
             subagent_count: 0,
             subagent_cost_usd: 0.0,
             cost_by_branch: BranchSpend::new(),
@@ -265,6 +329,23 @@ mod tests {
         assert_eq!(s.cost_by_day.values().sum::<f64>(), 1.5);
         assert_eq!(s.cost_by_branch["feat"][&60_000], 1.5);
         assert_eq!(s.first_prompt.as_deref(), Some("secret plans"));
+    }
+
+    #[test]
+    fn slots_rebuild_days_in_this_time_zone() {
+        // 23:45 UTC: the node's own day may differ from ours.
+        let ts = chrono::DateTime::parse_from_rfc3339("2026-11-24T23:45:00Z")
+            .unwrap()
+            .timestamp_millis();
+        let mut s = session();
+        s.cost_by_day = BTreeMap::from([(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(), 1.5)]);
+        s.cost_by_slot = SlotSpend::from([(ts, 1.5)]);
+        let back = RemoteSession::new("claude", s).into_session();
+        let ours = chrono::DateTime::from_timestamp_millis(ts)
+            .unwrap()
+            .with_timezone(&chrono::Local)
+            .date_naive();
+        assert_eq!(back.cost_by_day, BTreeMap::from([(ours, 1.5)]));
     }
 
     #[test]

@@ -280,8 +280,11 @@ fn parse_rollout(path: &Path) -> Option<Session> {
     // start_ts bucketing — so Codex still shows up in the day/today cost
     // buckets that now read `cost_by_day`.
     let mut cost_by_day = std::collections::BTreeMap::new();
+    let mut cost_by_slot = crate::models::SlotSpend::new();
     if cost > 0.0 {
         let ts = start_ts.or(end_ts).unwrap_or(0);
+        let slot = crate::models::SPEND_SLOT_MS;
+        cost_by_slot.insert(ts.div_euclid(slot) * slot, cost);
         if let Some(date) = DateTime::<Utc>::from_timestamp_millis(ts)
             .map(|dt| dt.with_timezone(&Local).date_naive())
         {
@@ -307,6 +310,7 @@ fn parse_rollout(path: &Path) -> Option<Session> {
         usage,
         cost_usd: cost,
         cost_by_day,
+        cost_by_slot,
         subagent_count: 0,
         subagent_cost_usd: 0.0,
         cost_by_branch: Default::default(),

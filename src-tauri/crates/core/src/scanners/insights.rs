@@ -699,6 +699,7 @@ mod tests {
             usage: Default::default(),
             cost_usd: spend.iter().map(|x| x.2).sum(),
             cost_by_day: Default::default(),
+            cost_by_slot: Default::default(),
             subagent_count: 0,
             subagent_cost_usd: 0.0,
             cost_by_branch,
