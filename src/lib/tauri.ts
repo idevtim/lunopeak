@@ -25,6 +25,8 @@ import type {
   MachineCosts,
   RemoteLive,
   RemoteNode,
+  PairedMachine,
+  MachineProbe,
   TerminalIntegrations,
   StatuslinePrefs,
   StatuslineSpan,
@@ -180,6 +182,11 @@ export const api = {
   getRemoteSessions: () => call<Session[]>("get_remote_sessions", undefined, []),
   /** `null` when Settings → Other machines is off. */
   getMachineCosts: () => call<MachineCosts | null>("get_machine_costs", undefined, null),
+  // Machines paired directly (no shared folder). Pairing needs the desktop app.
+  getPairedMachines: () => call<PairedMachine[]>("get_paired_machines", undefined, []),
+  probeMachine: (addr: string) => call<MachineProbe>("probe_machine", { addr }),
+  pairMachine: (addr: string, code: string) => call<string>("pair_machine", { addr, code }),
+  unpairMachine: (machineId: string) => call<void>("unpair_machine", { machineId }),
 
   // Terminal status lines
   getTerminalIntegrations: () =>

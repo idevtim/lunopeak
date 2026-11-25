@@ -47,3 +47,16 @@ rookie = "0.5"
 # Rust decoder keeps the Windows cross-compile and the Linux container build
 # free of a C toolchain for libzstd.
 ruzstd = "0.8"
+
+# Direct connections between machines (`direct`): each machine serves its
+# snapshots over TLS with a self-signed certificate, paired with a short code
+# through SPAKE2 so a recorded exchange can't be used to guess the code
+# offline. Everything is pinned to `ring`: no aws-lc-sys, so the Windows
+# cross-compile and the Linux container build need no C toolchain beyond
+# what `ring` already uses.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rcgen = { version = "0.13", default-features = false, features = ["ring", "crypto"] }
+spake2 = "0.4"
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"

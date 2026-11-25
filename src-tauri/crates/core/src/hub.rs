@@ -190,10 +190,10 @@ impl Hub {
     }
 
     /// Every node folder under `root` except `skip_id` (this machine).
-    pub fn nodes(&self, root: &Path, skip_id: Option<&str>) -> Vec<RemoteNode> {
+    pub fn nodes(&self, roots: &[impl AsRef<Path>], skip_id: Option<&str>) -> Vec<RemoteNode> {
         let now = SystemTime::now();
         let mut out: Vec<RemoteNode> = self
-            .refresh(root, skip_id)
+            .refresh(roots, skip_id)
             .into_iter()
             .map(|n| {
                 let live_ok = n.live.as_ref().filter(|l| l.result.is_ok());
@@ -234,10 +234,10 @@ impl Hub {
     }
 
     /// Live rows from every node whose live data is current.
-    pub fn live(&self, root: &Path, skip_id: Option<&str>) -> RemoteLive {
+    pub fn live(&self, roots: &[impl AsRef<Path>], skip_id: Option<&str>) -> RemoteLive {
         let now = SystemTime::now();
         let mut out = RemoteLive::default();
-        for n in self.refresh(root, skip_id) {
+        for n in self.refresh(roots, skip_id) {
             let Some(live) = n.live else { continue };
             let Ok(data) = live.result else { continue };
             if !is_fresh(live.seen_change, now) {
@@ -263,13 +263,13 @@ impl Hub {
     /// repeats across nodes) are dropped: the first copy wins.
     pub fn sessions(
         &self,
-        root: &Path,
+        roots: &[impl AsRef<Path>],
         skip_id: Option<&str>,
         agent: &str,
         local_ids: &HashSet<String>,
     ) -> Vec<Session> {
         let mut out = Vec::new();
-        self.each_new_session(root, skip_id, local_ids, |label, r| {
+        self.each_new_session(roots, skip_id, local_ids, |label, r| {
             if r.agent == agent {
                 let mut s = r.clone().into_session();
                 s.host = Some(label.to_string());
@@ -284,12 +284,12 @@ impl Hub {
     /// [`Hub::sessions`] would keep, counted without copying them.
     pub fn added_session_counts(
         &self,
-        root: &Path,
+        roots: &[impl AsRef<Path>],
         skip_id: Option<&str>,
         local_ids: &HashSet<String>,
     ) -> HashMap<String, usize> {
         let mut counts: HashMap<String, usize> = HashMap::new();
-        self.each_new_session(root, skip_id, local_ids, |label, _| {
+        self.each_new_session(roots, skip_id, local_ids, |label, _| {
             *counts.entry(label.to_string()).or_default() += 1;
         });
         counts
@@ -299,13 +299,13 @@ impl Hub {
     /// `local_ids` and wasn't already seen on an earlier node.
     fn each_new_session(
         &self,
-        root: &Path,
+        roots: &[impl AsRef<Path>],
         skip_id: Option<&str>,
         local_ids: &HashSet<String>,
         mut f: impl FnMut(&str, &node_wire::RemoteSession),
     ) {
         let mut seen: HashSet<&str> = HashSet::new();
-        let nodes = self.refresh(root, skip_id);
+        let nodes = self.refresh(roots, skip_id);
         let data: Vec<(&str, &SessionsData)> = nodes
             .iter()
             .filter_map(|n| {
@@ -324,31 +324,42 @@ impl Hub {
         }
     }
 
-    /// Re-read whatever changed under `root/nodes/` and return every node.
-    fn refresh(&self, root: &Path, skip_id: Option<&str>) -> Vec<NodeView> {
-        let dir = root.join(node_wire::NODES_DIR);
-        let Ok(read) = std::fs::read_dir(&dir) else {
-            return Vec::new();
-        };
-        let mut ids: Vec<String> = read
-            .flatten()
-            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-            .filter_map(|e| e.file_name().to_str().map(str::to_string))
-            // Only folders a node could have made; skips `.stfolder`, junk.
-            .filter(|name| node_wire::is_machine_id(name))
-            .filter(|name| Some(name.as_str()) != skip_id)
-            .collect();
-        ids.sort();
+    /// Re-read whatever changed under each `root/nodes/` and return every
+    /// node. A machine found under more than one root (paired directly and
+    /// also writing to a shared folder) is read from the first.
+    fn refresh(&self, roots: &[impl AsRef<Path>], skip_id: Option<&str>) -> Vec<NodeView> {
+        let mut found: Vec<(String, PathBuf)> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for root in roots {
+            let dir = root.as_ref().join(node_wire::NODES_DIR);
+            let Ok(read) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            let mut ids: Vec<String> = read
+                .flatten()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                .filter_map(|e| e.file_name().to_str().map(str::to_string))
+                // Only folders a node could have made; skips `.stfolder`, junk.
+                .filter(|name| node_wire::is_machine_id(name))
+                .filter(|name| Some(name.as_str()) != skip_id)
+                .collect();
+            ids.sort();
+            for id in ids {
+                if seen.insert(id.clone()) {
+                    let folder = dir.join(&id);
+                    found.push((id, folder));
+                }
+            }
+        }
 
         let Ok(mut state) = self.state.lock() else {
             return Vec::new();
         };
         let mut keep_live = HashSet::new();
         let mut keep_sessions = HashSet::new();
-        let mut views: Vec<NodeView> = ids
+        let mut views: Vec<NodeView> = found
             .into_iter()
-            .map(|id| {
-                let folder = dir.join(&id);
+            .map(|(id, folder)| {
                 let live_path = folder.join(node_wire::LIVE_FILE);
                 let sessions_path = folder.join(node_wire::SESSIONS_FILE);
                 let live = load(&mut state.live, &live_path, &id);
@@ -617,12 +628,12 @@ mod tests {
         let hub = Hub::new();
 
         let me = id("me");
-        let live = hub.live(root.path(), Some(&me));
+        let live = hub.live(&[root.path()], Some(&me));
         assert_eq!(live.activity.feed.len(), 1);
         assert_eq!(live.activity.feed[0].tool, "Bash");
         assert_eq!(live.activity.feed[0].host.as_deref(), Some("box"));
 
-        let nodes = hub.nodes(root.path(), Some(&me));
+        let nodes = hub.nodes(&[root.path()], Some(&me));
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].machine_id, id("box"));
         assert_eq!(nodes[0].host, "box");
@@ -647,8 +658,8 @@ mod tests {
             &envelope_as(&id("someone-else"), "liar", 1, live_with_event("Bash")),
         );
         let hub = Hub::new();
-        assert!(hub.live(root.path(), None).activity.feed.is_empty());
-        let nodes = hub.nodes(root.path(), None);
+        assert!(hub.live(&[root.path()], None).activity.feed.is_empty());
+        let nodes = hub.nodes(&[root.path()], None);
         let problem = |h: &str| {
             nodes
                 .iter()
@@ -689,13 +700,13 @@ mod tests {
         );
 
         let hub = Hub::new();
-        assert!(hub.live(root.path(), None).processes.is_empty());
-        assert!(hub.live(root.path(), None).activity.feed.is_empty());
-        let nodes = hub.nodes(root.path(), None);
+        assert!(hub.live(&[root.path()], None).processes.is_empty());
+        assert!(hub.live(&[root.path()], None).activity.feed.is_empty());
+        let nodes = hub.nodes(&[root.path()], None);
         assert!(!nodes[0].online);
         assert_eq!(nodes[0].sessions, 1);
         assert_eq!(
-            hub.sessions(root.path(), None, "claude", &HashSet::new())
+            hub.sessions(&[root.path()], None, "claude", &HashSet::new())
                 .len(),
             1
         );
@@ -722,13 +733,13 @@ mod tests {
         let local: HashSet<String> = ["shared".to_string()].into();
 
         let hub = Hub::new();
-        let got = hub.sessions(root.path(), None, "claude", &local);
+        let got = hub.sessions(&[root.path()], None, "claude", &local);
         let ids: Vec<_> = got
             .iter()
             .map(|s| (s.id.as_str(), s.host.as_deref().unwrap()))
             .collect();
         assert_eq!(ids, [("only-b", "b"), ("only-a", "a")]);
-        assert_eq!(hub.sessions(root.path(), None, "codex", &local).len(), 1);
+        assert_eq!(hub.sessions(&[root.path()], None, "codex", &local).len(), 1);
     }
 
     #[test]
@@ -742,7 +753,28 @@ mod tests {
                 &envelope_as(&folder, "box", 1, live_with_event("Bash")),
             );
         }
-        assert!(Hub::new().nodes(root.path(), None).is_empty());
+        assert!(Hub::new().nodes(&[root.path()], None).is_empty());
+    }
+
+    #[test]
+    fn a_machine_in_two_roots_is_read_from_the_first() {
+        let direct = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let one = |sid: &str| SessionsData {
+            sessions: vec![RemoteSession::new("claude", session(sid, 1))],
+        };
+        write(direct.path(), "box", "sessions.json", &envelope("box", 1, one("fresh")));
+        write(folder.path(), "box", "sessions.json", &envelope("box", 1, one("synced")));
+        write(folder.path(), "other", "sessions.json", &envelope("other", 1, one("o")));
+        let hub = Hub::new();
+        let roots = [direct.path(), folder.path()];
+        assert_eq!(hub.nodes(&roots, None).len(), 2);
+        let ids: Vec<String> = hub
+            .sessions(&roots, None, "claude", &HashSet::new())
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        assert!(ids.contains(&"fresh".to_string()) && !ids.contains(&"synced".to_string()));
     }
 
     #[test]
@@ -761,15 +793,15 @@ mod tests {
             );
         }
         let hub = Hub::new();
-        let labels: Vec<String> = hub.nodes(root.path(), None).into_iter().map(|n| n.host).collect();
+        let labels: Vec<String> = hub.nodes(&[root.path()], None).into_iter().map(|n| n.host).collect();
         assert_eq!(labels.len(), 2);
         assert_ne!(labels[0], labels[1]);
         assert!(labels.iter().all(|l| l.starts_with("MacBook-Pro (")));
-        let counts = hub.added_session_counts(root.path(), None, &HashSet::new());
+        let counts = hub.added_session_counts(&[root.path()], None, &HashSet::new());
         assert_eq!(counts.values().sum::<usize>(), 2);
         assert_eq!(counts.len(), 2);
         // Skipping one by id leaves the other, whose name is then unique.
-        let nodes = hub.nodes(root.path(), Some(&a));
+        let nodes = hub.nodes(&[root.path()], Some(&a));
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].host, "MacBook-Pro");
     }
@@ -783,12 +815,12 @@ mod tests {
         let me = node_wire::local_machine_id();
         let hub = Hub::new();
         let t = std::time::Instant::now();
-        let nodes = hub.nodes(&root, me.as_deref());
-        let live = hub.live(&root, me.as_deref());
-        let sessions = hub.sessions(&root, me.as_deref(), "claude", &HashSet::new());
+        let nodes = hub.nodes(&[&root], me.as_deref());
+        let live = hub.live(&[&root], me.as_deref());
+        let sessions = hub.sessions(&[&root], me.as_deref(), "claude", &HashSet::new());
         println!("first read {:?} (skipping {me:?})", t.elapsed());
         let t = std::time::Instant::now();
-        hub.sessions(&root, me.as_deref(), "claude", &HashSet::new());
+        hub.sessions(&[&root], me.as_deref(), "claude", &HashSet::new());
         println!("cached read {:?}", t.elapsed());
         for n in &nodes {
             println!("{n:?}");

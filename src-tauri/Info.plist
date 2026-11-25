@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the bundle's Info.plist by Tauri. -->
+<plist version="1.0">
+<dict>
+	<!-- Shown in macOS's Local Network prompt, the first time LunoPeak
+	     connects to another computer you paired in Settings → Other machines. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>LunoPeak connects to your other computers on this network to show their coding sessions, after you pair them in Settings.</string>
+</dict>
+</plist>

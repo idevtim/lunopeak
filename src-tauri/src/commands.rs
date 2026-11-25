@@ -1142,13 +1142,147 @@ pub async fn get_live_contexts(
 // rows only reach the views that call these and know about `host`. The tray,
 // status line and budget alerts stay this-machine only.
 
-/// The shared folder to read and this machine's id (skipped), or `None`
-/// when reading other machines is off.
-fn remote_root(app: &AppHandle, cache: &SettingsCache) -> Option<(std::path::PathBuf, Option<String>)> {
+/// Where to read other machines from, and this machine's id (skipped), or
+/// `None` when reading other machines is off. Directly paired machines come
+/// first, so one that also writes to the shared folder is read fresh.
+fn remote_root(app: &AppHandle, cache: &SettingsCache) -> Option<(Vec<std::path::PathBuf>, Option<String>)> {
     let s = cache.load(app).ok()?;
-    let folder = s.remote.folder.filter(|f| s.remote.enabled && !f.trim().is_empty())?;
+    if !s.remote.enabled {
+        return None;
+    }
+    let mut roots: Vec<std::path::PathBuf> = crate::direct_link::cache_root().into_iter().collect();
+    if let Some(folder) = s.remote.folder.filter(|f| !f.trim().is_empty()) {
+        roots.push(std::path::PathBuf::from(folder));
+    }
     // This machine's id, so a node running here isn't shown as another machine.
-    Some((std::path::PathBuf::from(folder), lunopeak_core::node_wire::local_machine_id()))
+    Some((roots, lunopeak_core::node_wire::local_machine_id()))
+}
+
+/// A directly paired machine, for Settings. The token stays in Rust.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairedMachineView {
+    pub machine_id: String,
+    pub name: String,
+    pub addr: String,
+    pub paired_at: i64,
+    pub last_ok: Option<i64>,
+    pub error: Option<String>,
+}
+
+/// What a machine at an address says about itself, before pairing.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MachineProbe {
+    pub addr: String,
+    pub machine_id: String,
+    pub name: String,
+    pub version: String,
+    pub pairing_open: bool,
+    /// It's this machine.
+    pub is_self: bool,
+    pub already_paired: bool,
+}
+
+fn app_dir_or_err() -> Result<std::path::PathBuf, String> {
+    crate::direct_link::app_dir().ok_or_else(|| "Couldn't find LunoPeak's settings folder".to_string())
+}
+
+#[tauri::command]
+pub async fn get_paired_machines(
+    links: State<'_, crate::direct_link::DirectLinks>,
+) -> Result<Vec<PairedMachineView>, String> {
+    let links = links.inner().clone();
+    blocking(move || {
+        let status = links.status();
+        Ok(lunopeak_core::direct::paired_machines(&app_dir_or_err()?)
+            .into_iter()
+            .map(|m| {
+                let st = status.get(&m.machine_id).cloned().unwrap_or_default();
+                PairedMachineView {
+                    machine_id: m.machine_id,
+                    name: m.name,
+                    addr: m.addr,
+                    paired_at: m.paired_at,
+                    last_ok: st.last_ok,
+                    error: st.error,
+                }
+            })
+            .collect())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn probe_machine(addr: String) -> Result<MachineProbe, String> {
+    blocking(move || {
+        let addr = lunopeak_core::direct::normalize_addr(&addr)
+            .ok_or_else(|| "That doesn't look like an address. Try an IP like 192.168.1.20, or a name like build-box.local.".to_string())?;
+        let hello = lunopeak_core::direct::hello(&addr).map_err(|e| e.to_string())?;
+        let paired = lunopeak_core::direct::paired_machines(&app_dir_or_err()?);
+        Ok(MachineProbe {
+            is_self: Some(&hello.machine_id) == lunopeak_core::node_wire::local_machine_id().as_ref(),
+            already_paired: paired.iter().any(|m| m.machine_id == hello.machine_id),
+            addr,
+            machine_id: hello.machine_id,
+            name: hello.name,
+            version: hello.version,
+            pairing_open: hello.pairing_open,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn pair_machine(
+    addr: String,
+    code: String,
+    links: State<'_, crate::direct_link::DirectLinks>,
+) -> Result<String, String> {
+    let links = links.inner().clone();
+    blocking(move || {
+        let dir = app_dir_or_err()?;
+        let addr = lunopeak_core::direct::normalize_addr(&addr)
+            .ok_or_else(|| "That doesn't look like an address.".to_string())?;
+        let me = lunopeak_core::node_wire::local_machine_id()
+            .ok_or_else(|| "Couldn't read this machine's id".to_string())?;
+        let my_name = lunopeak_core::node_wire::default_name().unwrap_or_else(|| "LunoPeak".into());
+        let m = lunopeak_core::direct::pair(&addr, &code, &me, &my_name).map_err(|e| e.to_string())?;
+        if m.machine_id == me {
+            return Err("That's this machine.".into());
+        }
+        let mut all = lunopeak_core::direct::paired_machines(&dir);
+        all.retain(|x| x.machine_id != m.machine_id);
+        let name = m.name.clone();
+        all.push(m);
+        lunopeak_core::direct::save_paired_machines(&dir, &all).map_err(|e| e.to_string())?;
+        links.wake();
+        Ok(name)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn unpair_machine(
+    machine_id: String,
+    links: State<'_, crate::direct_link::DirectLinks>,
+) -> Result<(), String> {
+    let links = links.inner().clone();
+    blocking(move || {
+        let dir = app_dir_or_err()?;
+        let mut all = lunopeak_core::direct::paired_machines(&dir);
+        if let Some(m) = all.iter().find(|m| m.machine_id == machine_id) {
+            // Best effort: it may be off. It stops being read here either way.
+            if let Err(e) = lunopeak_core::direct::unpair(m) {
+                crate::elog!(info, "direct", "unpair {} remotely: {e}", m.name);
+            }
+        }
+        all.retain(|m| m.machine_id != machine_id);
+        lunopeak_core::direct::save_paired_machines(&dir, &all).map_err(|e| e.to_string())?;
+        links.wake();
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]

@@ -131,43 +131,145 @@ fn default_agent() -> String {
 }
 
 /// This machine's id, created on first use: 32 lowercase hex characters in
-/// `<app_dir>/machine-id`. The window, the menu-bar process and a node can
-/// all race to create it, so the first `create_new` wins and the rest read.
+/// `<app_dir>/machine-id`, followed by a tag of the hardware it was made on.
+///
+/// The tag catches an app folder carried to another computer (Migration
+/// Assistant, a restored backup, a cloned VM): the id would otherwise travel
+/// with it, and the two machines would each hide the other as itself. When
+/// the tag no longer matches, a new id is made. Where the hardware can't be
+/// read, the id is kept as is.
+///
+/// The window, the menu-bar process and a node can all race to create it, so
+/// the first `create_new` wins and the rest read what it wrote.
 pub fn machine_id(app_dir: &Path) -> std::io::Result<String> {
+    machine_id_on(app_dir, hardware_tag().as_deref())
+}
+
+fn machine_id_on(app_dir: &Path, hw: Option<&str>) -> std::io::Result<String> {
     let path = app_dir.join(MACHINE_ID_FILE);
-    let read = |path: &Path| -> std::io::Result<String> {
-        let id = std::fs::read_to_string(path)?.trim().to_string();
-        if is_machine_id(&id) {
-            Ok(id)
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("{} doesn't hold a machine id", path.display()),
-            ))
-        }
+    let contents = |id: &str| match hw {
+        Some(tag) => format!("{id}\nhw {tag}\n"),
+        None => format!("{id}\n"),
     };
-    if let Ok(id) = read(&path) {
-        return Ok(id);
-    }
-    std::fs::create_dir_all(app_dir)?;
-    let id = uuid::Uuid::new_v4().simple().to_string();
-    match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-        Ok(mut f) => {
-            f.write_all(id.as_bytes())?;
-            Ok(id)
+    match read_machine_id(&path) {
+        Ok((id, stored)) => match (stored.as_deref(), hw) {
+            (Some(was), Some(now)) if was != now => {
+                // Moved to other hardware: this is a different machine now.
+                let fresh = uuid::Uuid::new_v4().simple().to_string();
+                replace_file(&path, contents(&fresh).as_bytes())?;
+                Ok(read_machine_id(&path)?.0)
+            }
+            (None, Some(_)) => {
+                // Made before ids were tied to hardware: tie it now.
+                replace_file(&path, contents(&id).as_bytes())?;
+                Ok(id)
+            }
+            _ => Ok(id),
+        },
+        Err(_) => {
+            std::fs::create_dir_all(app_dir)?;
+            let id = uuid::Uuid::new_v4().simple().to_string();
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut f) => {
+                    f.write_all(contents(&id).as_bytes())?;
+                    Ok(id)
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // Another process got there first; give it a moment to write.
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    Ok(read_machine_id(&path)?.0)
+                }
+                Err(e) => Err(e),
+            }
         }
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            // Another process got there first; give it a moment to write.
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            read(&path)
-        }
-        Err(e) => Err(e),
     }
 }
 
-/// [`machine_id`] in the app dir this build uses.
+/// The id and hardware tag in a `machine-id` file.
+fn read_machine_id(path: &Path) -> std::io::Result<(String, Option<String>)> {
+    let text = std::fs::read_to_string(path)?;
+    let mut lines = text.lines();
+    let id = lines.next().unwrap_or("").trim().to_string();
+    if !is_machine_id(&id) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{} doesn't hold a machine id", path.display()),
+        ));
+    }
+    let hw = lines
+        .filter_map(|l| l.strip_prefix("hw "))
+        .map(|t| t.trim().to_string())
+        .next();
+    Ok((id, hw))
+}
+
+/// Write `bytes` to `path` through a temp file and a rename, so a reader in
+/// another process never sees half of it.
+pub fn replace_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
+}
+
+/// A short hash of this computer's hardware id (macOS `IOPlatformUUID`,
+/// Linux `/etc/machine-id`, Windows `MachineGuid`). Read once per process.
+pub fn hardware_tag() -> Option<String> {
+    static TAG: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    TAG.get_or_init(|| {
+        use sha2::{Digest, Sha256};
+        let raw = hardware_id()?;
+        let digest = Sha256::digest(raw.trim().as_bytes());
+        Some(digest.iter().take(8).map(|b| format!("{b:02x}")).collect())
+    })
+    .clone()
+}
+
+#[cfg(target_os = "macos")]
+fn hardware_id() -> Option<String> {
+    let out = std::process::Command::new("/usr/sbin/ioreg")
+        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text.lines().find(|l| l.contains("\"IOPlatformUUID\""))?;
+    let value = line.rsplit('"').nth(1)?.to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+#[cfg(target_os = "linux")]
+fn hardware_id() -> Option<String> {
+    ["/etc/machine-id", "/var/lib/dbus/machine-id"]
+        .iter()
+        .find_map(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+#[cfg(windows)]
+fn hardware_id() -> Option<String> {
+    use crate::process_ext::NoWindow;
+    let out = std::process::Command::new("reg")
+        .args(["query", r"HKLM\SOFTWARE\Microsoft\Cryptography", "/v", "MachineGuid"])
+        .no_window()
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text.lines().find(|l| l.contains("MachineGuid"))?;
+    line.split_whitespace().last().map(str::to_string)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+fn hardware_id() -> Option<String> {
+    None
+}
+
+/// [`machine_id`] in the app dir this build uses, read once per process.
 pub fn local_machine_id() -> Option<String> {
-    machine_id(&crate::statusline::app_dir()?).ok()
+    static ID: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    ID.get_or_init(|| machine_id(&crate::statusline::app_dir()?).ok())
+        .clone()
 }
 
 /// Whether `s` is shaped like a [`machine_id`], so a folder or envelope
@@ -274,6 +376,29 @@ mod tests {
         assert_eq!(clean_name("  Build\tbox\n(2) ").as_deref(), Some("Build box (2)"));
         assert_eq!(clean_name(" \u{7}  "), None);
         assert_eq!(clean_name(&"x".repeat(100)).map(|n| n.len()), Some(40));
+    }
+
+    #[test]
+    fn machine_id_changes_when_moved_to_other_hardware() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = machine_id_on(dir.path(), Some("aaaa")).unwrap();
+        assert_eq!(machine_id_on(dir.path(), Some("aaaa")).unwrap(), first);
+        // Unreadable hardware keeps the id.
+        assert_eq!(machine_id_on(dir.path(), None).unwrap(), first);
+        let moved = machine_id_on(dir.path(), Some("bbbb")).unwrap();
+        assert_ne!(moved, first);
+        assert!(is_machine_id(&moved));
+        assert_eq!(machine_id_on(dir.path(), Some("bbbb")).unwrap(), moved);
+    }
+
+    #[test]
+    fn machine_id_made_before_hardware_tags_is_kept_and_tied() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "0123456789abcdef0123456789abcdef";
+        std::fs::write(dir.path().join(MACHINE_ID_FILE), id).unwrap();
+        assert_eq!(machine_id_on(dir.path(), Some("aaaa")).unwrap(), id);
+        let (_, hw) = read_machine_id(&dir.path().join(MACHINE_ID_FILE)).unwrap();
+        assert_eq!(hw.as_deref(), Some("aaaa"));
     }
 
     #[test]

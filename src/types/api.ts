@@ -181,6 +181,30 @@ export interface RemoteNode {
   problem: string | null;
 }
 
+/** A machine paired directly. Mirrors `commands::PairedMachineView`. */
+export interface PairedMachine {
+  machineId: string;
+  name: string;
+  /** `host:port` it's reached at. */
+  addr: string;
+  pairedAt: number;
+  /** Epoch ms of the last successful fetch. */
+  lastOk: number | null;
+  /** Why the last fetch failed. */
+  error: string | null;
+}
+
+/** What a machine at an address says about itself. Mirrors `commands::MachineProbe`. */
+export interface MachineProbe {
+  addr: string;
+  machineId: string;
+  name: string;
+  version: string;
+  pairingOpen: boolean;
+  isSelf: boolean;
+  alreadyPaired: boolean;
+}
+
 /** Spend on one machine. Mirrors `hub::MachineCost`. */
 export interface MachineCost {
   /** Absent for this machine. */

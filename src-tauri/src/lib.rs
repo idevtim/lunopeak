@@ -1,5 +1,6 @@
 mod app_menu;
 mod commands;
+mod direct_link;
 mod logger;
 #[cfg(target_os = "macos")]
 mod macos_agent;
@@ -106,6 +107,7 @@ pub fn run() {
         .manage(SessionsCache::new())
         .manage(CodexCache::new())
         .manage(lunopeak_core::hub::Hub::new())
+        .manage(direct_link::DirectLinks::default())
         .manage(GithubCache::default())
         .manage(InsightsPrCache::default())
         .setup(move |app| {
@@ -165,6 +167,8 @@ pub fn run() {
                     macos_agent::write_pending_route(app.handle(), &route);
                 }
             }
+            // Keep directly paired machines' data fresh (window process only).
+            direct_link::start(app.handle().clone());
             apply_window_effects(app)?;
             // Restore geometry after vibrancy/decoration changes have settled —
             // dropping decorations on Windows/Linux shifts the window.
@@ -285,6 +289,10 @@ pub fn run() {
             commands::get_remote_live,
             commands::get_remote_sessions,
             commands::get_machine_costs,
+            commands::get_paired_machines,
+            commands::probe_machine,
+            commands::pair_machine,
+            commands::unpair_machine,
             commands::get_terminal_integrations,
             commands::preview_statusline,
             commands::set_claude_statusline,
