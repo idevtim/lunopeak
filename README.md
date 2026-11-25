@@ -24,6 +24,33 @@ LunoPeak is free and open source under the [MIT License](LICENSE).
 
 All builds auto-update except Linux RPM (manual). What changed in each version is in [`release-notes/`](release-notes/).
 
+## Other machines
+
+See the agents, history and spend of your other computers next to this one's: a desktop and a laptop, a build server, a Windows PC. Machines connect directly over your network with an encrypted, paired connection. There's no account and nothing goes through a server.
+
+1. **On the machine to share:**
+   - **If it has LunoPeak:** turn on Settings → Share this machine.
+   - **On a server or anything without the app:** paste one line in a terminal.
+     - macOS or Linux:
+       ```sh
+       curl -fsSL https://github.com/idevtim/lunopeak/releases/latest/download/install-node.sh | sh
+       ```
+     - Windows (PowerShell):
+       ```powershell
+       irm https://github.com/idevtim/lunopeak/releases/latest/download/install-node.ps1 | iex
+       ```
+     This installs `lunopeak-node`, starts it at login, and shows a pairing code.
+2. **On your main machine:** go to Settings → Other machines → Add a machine. Pick the machine from the list, or type its address (a [Tailscale](https://tailscale.com) address works from anywhere), then enter the 6-digit code.
+
+**What other machines see:**
+- **Your prompts stay on the machine they were typed on.** Other machines see files, commands, tools and spend, unless you turn on Share prompts.
+- **Replays stay local.** Transcripts never leave their machine, so replay only works there.
+- **Some things stay this machine only:** the menu bar, budget alerts and the terminal status line.
+
+**Using a sync tool instead:** machines can also share through a folder synced with Syncthing, iCloud Drive or a network share. Run `lunopeak-node --out <folder>` there and choose the folder under Settings → Other machines.
+
+**Commands:** `lunopeak-node status`, `pair`, `hubs`, `unpair` and `uninstall` manage a node; `lunopeak-node --help` lists them all.
+
 ## Features
 
 ### Overview
@@ -40,6 +67,7 @@ All builds auto-update except Linux RPM (manual). What changed in each version i
 - **Transcripts** — full-text search across every conversation
 - **Tools** — which tools each session used, how often
 - **Costs** — token spend per session, repo, and provider, subagents included, with budget alerts
+- **Other machines** — live agents, history, and spend from your other computers (macOS, Windows, Linux), paired directly over your network; see [Other machines](#other-machines)
 
 ### Code Intelligence
 - **Repos** — every project on your machine with health and AI-usage signals
@@ -69,10 +97,10 @@ All builds auto-update except Linux RPM (manual). What changed in each version i
 - **Worktrees** — manage Git worktrees from one panel
 
 ### Privacy & Security
-- **Fully Local** — no account, no cloud sync, no telemetry
+- **Fully Local** — no account, no cloud sync, no telemetry. Other machines connect directly to each other, encrypted and paired, never through a server
 - **OS Keychain** — Anthropic, OpenAI, Gemini, and xAI keys stored in macOS Keychain / Windows Credential Manager / Linux Secret Service
 - **Native Performance** — Tauri 2 (Rust). ~150 MB on disk, ~120 MB resident
-- **Outbound Only When You Ask** — plan limits from Anthropic and ChatGPT, public status pages, pull requests through your own GitHub CLI, the optional update check, and provider APIs during Assistant use. Nothing goes to a LunoPeak server; there isn't one. Read the source and check.
+- **Outbound Only When You Ask** — plan limits from Anthropic and ChatGPT, public status pages, pull requests through your own GitHub CLI, the optional update check, and provider APIs during Assistant use, and connections to the computers you paired. Nothing goes to a LunoPeak server; there isn't one. Read the source and check.
 
 ## Screenshots
 
