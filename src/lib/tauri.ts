@@ -22,6 +22,7 @@ import type {
   ListeningPort,
   LiveActivity,
   LiveContext,
+  MachineCosts,
   RemoteLive,
   RemoteNode,
   TerminalIntegrations,
@@ -177,6 +178,8 @@ export const api = {
       processes: [],
     }),
   getRemoteSessions: () => call<Session[]>("get_remote_sessions", undefined, []),
+  /** `null` when Settings → Other machines is off. */
+  getMachineCosts: () => call<MachineCosts | null>("get_machine_costs", undefined, null),
 
   // Terminal status lines
   getTerminalIntegrations: () =>

@@ -1513,7 +1513,7 @@ fn bucket_by_weekly_session(sessions: &[&Session]) -> Vec<CostBucket> {
 /// per-message 5h/weekly windows in `scanners::usage` — a session resumed days
 /// after it started (Claude Code reuses the original JSONL, so `start_ts` stays
 /// pinned to day one) no longer dumps all of its recent cost on the wrong day.
-fn cost_day_buckets(sessions: &[Session], days: usize) -> Vec<f64> {
+pub fn cost_day_buckets(sessions: &[Session], days: usize) -> Vec<f64> {
     let today = Local::now().date_naive();
     let mut out = vec![0.0; days];
     let span = days as i64;

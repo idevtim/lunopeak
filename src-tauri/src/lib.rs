@@ -284,6 +284,7 @@ pub fn run() {
             commands::get_remote_nodes,
             commands::get_remote_live,
             commands::get_remote_sessions,
+            commands::get_machine_costs,
             commands::get_terminal_integrations,
             commands::preview_statusline,
             commands::set_claude_statusline,

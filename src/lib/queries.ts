@@ -125,6 +125,12 @@ export const queries = {
     queryFn: api.getRemoteLive,
     staleTime: 1500,
   },
+  machineCosts: {
+    queryKey: ["machine-costs"] as const,
+    queryFn: api.getMachineCosts,
+    staleTime: 60 * 1000,
+    refetchInterval: 60 * 1000,
+  },
   remoteSessions: {
     queryKey: ["remote-sessions"] as const,
     queryFn: api.getRemoteSessions,

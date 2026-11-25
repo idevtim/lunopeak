@@ -19,7 +19,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::models::{ActiveProcess, LiveActivity, LiveContext, Session};
+use crate::models::{ActiveProcess, CostBreakdown, LiveActivity, LiveContext, Session};
 use crate::node_wire::{self, Envelope, LiveData, SessionsData};
 
 /// A node's live data counts as current while the hub has seen it change (or
@@ -56,6 +56,58 @@ pub struct RemoteLive {
     pub activity: LiveActivity,
     pub contexts: Vec<LiveContext>,
     pub processes: Vec<ActiveProcess>,
+}
+
+/// Spend on one machine, for the Costs view's "By machine" card.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MachineCost {
+    /// `None` for this machine.
+    pub host: Option<String>,
+    pub total_usd: f64,
+    pub sessions: usize,
+    /// Spend per local calendar day for the last 30 days, oldest → newest.
+    pub by_day: Vec<f64>,
+}
+
+/// Costs across every machine: the combined breakdown (same shape as
+/// `get_costs`) plus each machine's share. `machines` holds this machine
+/// first, then the others by spend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MachineCosts {
+    pub all: CostBreakdown,
+    pub machines: Vec<MachineCost>,
+}
+
+/// Combine this machine's sessions with remote ones (each with `host` set).
+pub fn machine_costs(local: &[Session], remote: &[Session]) -> MachineCosts {
+    let mut by_host: std::collections::BTreeMap<&str, Vec<Session>> = Default::default();
+    for s in remote {
+        by_host
+            .entry(s.host.as_deref().unwrap_or("?"))
+            .or_default()
+            .push(s.clone());
+    }
+    let summary = |host: Option<String>, sessions: &[Session]| MachineCost {
+        host,
+        total_usd: sessions.iter().map(|s| s.cost_usd).sum(),
+        sessions: sessions.len(),
+        by_day: crate::scanners::sessions::cost_day_buckets(sessions, 30),
+    };
+    let mut others: Vec<MachineCost> = by_host
+        .iter()
+        .map(|(h, ss)| summary(Some(h.to_string()), ss))
+        .collect();
+    others.sort_by(|a, b| b.total_usd.total_cmp(&a.total_usd));
+    let mut machines = vec![summary(None, local)];
+    machines.extend(others);
+
+    let all: Vec<Session> = local.iter().chain(remote).cloned().collect();
+    MachineCosts {
+        all: crate::scanners::sessions::costs(&all),
+        machines,
+    }
 }
 
 /// The envelope minus its payload, parsed first so a node newer than this
@@ -620,5 +672,46 @@ mod tests {
             sessions.len(),
             sessions.iter().map(|s| s.cost_usd).sum::<f64>()
         );
+    }
+
+    #[test]
+    fn machine_costs_split_by_host_and_combine() {
+        let today = chrono::Local::now().date_naive();
+        let with = |id: &str, host: Option<&str>, usd: f64| {
+            let mut s = session(id, 1);
+            s.host = host.map(str::to_string);
+            s.cost_usd = usd;
+            s.cost_by_day.insert(today, usd);
+            s
+        };
+        let local = vec![with("l1", None, 2.0)];
+        let remote = vec![
+            with("a1", Some("a"), 1.0),
+            with("b1", Some("b"), 5.0),
+            with("b2", Some("b"), 1.0),
+        ];
+        let mc = machine_costs(&local, &remote);
+        let rows: Vec<_> = mc
+            .machines
+            .iter()
+            .map(|m| {
+                (
+                    m.host.as_deref(),
+                    m.total_usd,
+                    m.sessions,
+                    *m.by_day.last().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                (None, 2.0, 1, 2.0),
+                (Some("b"), 6.0, 2, 6.0),
+                (Some("a"), 1.0, 1, 1.0)
+            ]
+        );
+        assert_eq!(mc.all.total_usd, 9.0);
+        assert_eq!(*mc.all.by_day.last().unwrap(), 9.0);
     }
 }

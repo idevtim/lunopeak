@@ -198,7 +198,7 @@ export function SettingsView() {
       qc.invalidateQueries({ queryKey: queries.repos.queryKey });
       // Cheap to refetch (cached by mtime on the Rust side), and the folder
       // or the on/off switch may have changed.
-      for (const q of [queries.remoteNodes, queries.remoteLive, queries.remoteSessions]) {
+      for (const q of [queries.remoteNodes, queries.remoteLive, queries.remoteSessions, queries.machineCosts]) {
         qc.invalidateQueries({ queryKey: q.queryKey });
       }
 

@@ -8,7 +8,7 @@ use crate::models::{
     UsageLimits, WorktreeEntry, RepoInsights, PrInsights,
 };
 use lunopeak_core::feeds::Sources;
-use lunopeak_core::hub::{Hub, RemoteLive, RemoteNode};
+use lunopeak_core::hub::{Hub, MachineCosts, RemoteLive, RemoteNode};
 use crate::process_ext::NoWindow;
 use crate::scanners::codex::Cache as CodexCache;
 use crate::scanners::sessions::Cache as SessionsCache;
@@ -1201,6 +1201,43 @@ pub async fn get_remote_sessions(
             Default::default()
         };
         Ok(hub.sessions(&root, me.as_deref(), "claude", &local))
+    })
+    .await
+}
+
+/// Spend across this machine and every other one, for the Costs view.
+/// `None` when reading other machines is off. The menu bar, status line and
+/// budget alerts keep using `get_costs` (this machine only).
+#[tauri::command]
+pub async fn get_machine_costs(
+    app: AppHandle,
+    hub: State<'_, Hub>,
+    cache: State<'_, SessionsCache>,
+    codex_cache: State<'_, CodexCache>,
+    settings_cache: State<'_, SettingsCache>,
+) -> Result<Option<MachineCosts>, String> {
+    let Some((root, me)) = remote_root(&app, settings_cache.inner()) else {
+        return Ok(None);
+    };
+    let claude_on = claude_enabled(&app, settings_cache.inner());
+    let codex_on = codex_enabled(&app, settings_cache.inner());
+    let hub = hub.inner().clone();
+    let cache = cache.inner().clone();
+    let codex_cache = codex_cache.inner().clone();
+    blocking(move || {
+        let mut local = if claude_on {
+            scanners::sessions::scan_all(&cache).map_err(|e| e.to_string())?
+        } else {
+            Vec::new()
+        };
+        if codex_on {
+            local.extend(scanners::codex::scan_all(&codex_cache).map_err(|e| e.to_string())?);
+        }
+        let ids: std::collections::HashSet<String> = local.iter().map(|s| s.id.clone()).collect();
+        // Each node already applied its own machine's agent settings.
+        let mut remote = hub.sessions(&root, me.as_deref(), "claude", &ids);
+        remote.extend(hub.sessions(&root, me.as_deref(), "codex", &ids));
+        Ok(Some(lunopeak_core::hub::machine_costs(&local, &remote)))
     })
     .await
 }

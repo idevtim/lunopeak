@@ -177,6 +177,24 @@ export interface RemoteNode {
   problem: string | null;
 }
 
+/** Spend on one machine. Mirrors `hub::MachineCost`. */
+export interface MachineCost {
+  /** Absent for this machine. */
+  host: string | null;
+  totalUsd: number;
+  sessions: number;
+  /** Last 30 local calendar days, oldest → newest. */
+  byDay: number[];
+}
+
+/** Costs across every machine. Mirrors `hub::MachineCosts`. */
+export interface MachineCosts {
+  /** Combined breakdown, same shape as `getCosts`. */
+  all: CostBreakdown;
+  /** This machine first, then the others by spend. */
+  machines: MachineCost[];
+}
+
 /** Live rows from every online remote machine. Mirrors `hub::RemoteLive`. */
 export interface RemoteLive {
   activity: LiveActivity;
