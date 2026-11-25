@@ -518,9 +518,9 @@ fn parse<T: DeserializeOwned>(
     if header.schema != node_wire::SCHEMA {
         let newer = header.schema > node_wire::SCHEMA;
         entry.result = Err(if newer {
-            "Its node is newer than this app. Update LunoPeak here.".to_string()
+            "It runs a newer LunoPeak than this one. Update LunoPeak here.".to_string()
         } else {
-            "Its node is older than this app. Update lunopeak-node there.".to_string()
+            "It runs an older LunoPeak than this one. Update LunoPeak (or lunopeak-node) there.".to_string()
         });
         return entry;
     }
@@ -691,7 +691,7 @@ mod tests {
                 .clone()
                 .unwrap()
         };
-        assert!(problem("newer").contains("newer than this app"));
+        assert!(problem("newer").contains("newer LunoPeak"));
         assert!(problem("liar").contains("another machine"));
     }
 

@@ -770,6 +770,19 @@ function OtherMachines({ s, update }: { s: Settings; update: Update }) {
     }))
     .sort((a, b) => (a.node?.host ?? a.link?.name ?? "").localeCompare(b.node?.host ?? b.link?.name ?? ""));
   const loading = nodes.isLoading || paired.isLoading;
+  const folderCheck = useQuery({
+    queryKey: ["shared-folder-check", r.folder] as const,
+    queryFn: () => api.checkSharedFolder(r.folder ?? ""),
+    enabled: r.enabled && !!r.folder,
+    refetchInterval: 10_000,
+  });
+  const folderNote = !r.folder || !folderCheck.data
+    ? null
+    : !folderCheck.data.exists
+      ? "Can't find this folder. If it's on an external drive or a network share, connect it; if it moved, choose it again."
+      : folderCheck.data.machines === 0
+        ? "Nothing here yet: no machine has written to this folder. Check the sync tool has finished, or point lunopeak-node --out here."
+        : null;
 
   return (
     <SettingsSection
@@ -808,6 +821,8 @@ function OtherMachines({ s, update }: { s: Settings; update: Update }) {
                         <span className="font-mono">{name}</span>
                         {node?.online ? (
                           <Pill tone="green">Online</Pill>
+                        ) : link?.error ? (
+                          <Pill tone="rose">Can't connect</Pill>
                         ) : link && !node ? (
                           <Pill>Connecting</Pill>
                         ) : (
@@ -847,7 +862,19 @@ function OtherMachines({ s, update }: { s: Settings; update: Update }) {
         label="Shared folder"
         hint={
           r.folder ? (
-            <span className="font-mono text-[11.5px]">{r.folder}</span>
+            <span className="flex flex-col gap-0.5">
+              <span className="font-mono text-[11.5px]">{r.folder}</span>
+              {r.enabled && folderNote && (
+                <span
+                  className={cn(
+                    "text-xs",
+                    folderCheck.data?.exists ? "text-zinc-500 dark:text-zinc-400" : "text-rose-600 dark:text-rose-400",
+                  )}
+                >
+                  {folderNote}
+                </span>
+              )}
+            </span>
           ) : (
             "Optional. Machines that can't reach this one directly can write here with lunopeak-node --out."
           )
@@ -935,8 +962,10 @@ function ShareThisMachine({ s, update }: { s: Settings; update: Update }) {
     : st?.error
       ? null
       : st?.running
-        ? `Sharing as ${st.name ?? "this machine"} on port ${st.port ?? "?"}${st.discoverable ? ", visible on this network" : ""}.`
-        : "Starting…";
+        ? `Sharing as ${st.name ?? "this machine"} on port ${st.port ?? "?"}${st.discoverable ? ", visible on this network" : ", not visible on this network (pair it by address)"}.`
+        : st && st.updatedAt > 0
+          ? "Sharing stopped responding. Quit LunoPeak from the menu bar and open it again."
+          : "Starting…";
 
   return (
     <SettingsSection
@@ -1204,6 +1233,9 @@ function AddMachine({ paired, onPaired }: { paired: PairedMachine[]; onPaired: (
           <span className="text-xs text-zinc-600 dark:text-zinc-300">
             Found <span className="font-mono">{probe.name}</span> (LunoPeak {probe.version})
             {probe.alreadyPaired && ", already paired. Pairing again replaces it."}
+            {probe.problem && (
+              <span className="block text-rose-600 dark:text-rose-400">{probe.problem}</span>
+            )}
             {!probe.pairingOpen && (
               <>
                 . Run <code className="font-mono text-[11.5px]">lunopeak-node pair</code> there to get a code.
@@ -1225,7 +1257,7 @@ function AddMachine({ paired, onPaired }: { paired: PairedMachine[]; onPaired: (
             <Button
               type="submit"
               variant="primary"
-              disabled={code.replace(/\D/g, "").length !== 6 || busy !== null}
+              disabled={code.replace(/\D/g, "").length !== 6 || busy !== null || !!probe.problem}
             >
               {busy === "pair" ? "Pairing…" : "Pair"}
             </Button>

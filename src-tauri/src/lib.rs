@@ -303,6 +303,7 @@ pub fn run() {
             commands::pair_machine,
             commands::unpair_machine,
             commands::get_share_status,
+            commands::check_shared_folder,
             commands::open_share_pairing,
             commands::close_share_pairing,
             commands::get_share_hubs,

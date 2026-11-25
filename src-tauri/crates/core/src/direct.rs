@@ -447,7 +447,7 @@ fn serve_file(path: &Path, if_none_match: Option<&String>) -> Response {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Hello {
     pub machine_id: String,
@@ -563,7 +563,10 @@ fn pair_finish(state: &ServerState, body: &[u8]) -> Response {
     mac.update(p.hub_id.as_bytes());
     if mac.verify_slice(&confirm).is_err() {
         // Wrong code, or a device in the middle with its own certificate.
-        return Response::error(403, "Wrong code.");
+        return Response::error(
+            403,
+            "Wrong code. Check it and try again; after five wrong tries, start pairing again on that machine.",
+        );
     }
     let token = token_from(&p.key);
     let mut hubs = paired_hubs(&state.cfg.state_dir);
@@ -627,6 +630,8 @@ pub enum DirectError {
     NotPaired,
     /// It has nothing at that path (a snapshot not published yet).
     NotFound,
+    /// Fetched fine, but couldn't be saved on this machine.
+    Local(String),
     /// Anything else it said, in its words.
     Refused(String),
 }
@@ -635,6 +640,7 @@ impl std::fmt::Display for DirectError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DirectError::Unreachable(e) => write!(f, "Can't reach it: {e}"),
+            DirectError::Local(e) => write!(f, "Couldn't save its data on this machine: {e}"),
             DirectError::CertificateChanged => write!(
                 f,
                 "It answered with a different certificate. If it was reinstalled, pair it again."
@@ -725,12 +731,19 @@ fn request(
     body: &[u8],
 ) -> Result<Reply, DirectError> {
     let unreachable = |e: &dyn std::fmt::Display| DirectError::Unreachable(e.to_string());
+    let host = addr.rsplit_once(':').map_or(addr, |(h, _)| h);
+    let no_name = || {
+        DirectError::Unreachable(format!(
+            "the name {host} doesn't lead anywhere from here. Try its IP address instead."
+        ))
+    };
     let sock = addr
         .to_socket_addrs()
-        .map_err(|e| unreachable(&e))?
+        .map_err(|_| no_name())?
         .next()
-        .ok_or_else(|| DirectError::Unreachable(format!("{addr} doesn't resolve")))?;
-    let stream = TcpStream::connect_timeout(&sock, CONNECT_TIMEOUT).map_err(|e| unreachable(&e))?;
+        .ok_or_else(no_name)?;
+    let stream = TcpStream::connect_timeout(&sock, CONNECT_TIMEOUT)
+        .map_err(|e| DirectError::Unreachable(explain_io(&e)))?;
     stream.set_read_timeout(Some(IO_TIMEOUT)).map_err(|e| unreachable(&e))?;
     stream.set_write_timeout(Some(IO_TIMEOUT)).map_err(|e| unreachable(&e))?;
     let config = rustls::ClientConfig::builder_with_provider(provider())
@@ -785,7 +798,28 @@ fn tls_error(verifier: &PinnedCert, e: std::io::Error) -> DirectError {
     if changed {
         DirectError::CertificateChanged
     } else {
-        DirectError::Unreachable(e.to_string())
+        DirectError::Unreachable(explain_io(&e))
+    }
+}
+
+/// A connection failure in words: what probably happened and what to check.
+fn explain_io(e: &std::io::Error) -> String {
+    use std::io::ErrorKind as K;
+    match e.kind() {
+        K::ConnectionRefused => "nothing is accepting connections there. Check that Share this machine is \
+            on in LunoPeak there, or that lunopeak-node is running."
+            .into(),
+        K::TimedOut | K::WouldBlock => format!(
+            "no answer. It may be asleep or off, on another network, or a firewall may be blocking \
+             port {DEFAULT_PORT}."
+        ),
+        K::HostUnreachable | K::NetworkUnreachable => {
+            "it isn't reachable from this network. Is it on the same Wi-Fi, or on your Tailscale network?".into()
+        }
+        K::ConnectionReset | K::ConnectionAborted | K::UnexpectedEof | K::InvalidData => {
+            "it closed the connection. Something other than LunoPeak may be using that port.".into()
+        }
+        _ => e.to_string(),
     }
 }
 
@@ -913,8 +947,8 @@ pub fn sync(
         if reply.status == 304 {
             continue;
         }
-        std::fs::create_dir_all(&dir).map_err(|e| DirectError::Unreachable(e.to_string()))?;
-        node_wire::replace_file(&path, &reply.body).map_err(|e| DirectError::Unreachable(e.to_string()))?;
+        std::fs::create_dir_all(&dir).map_err(|e| DirectError::Local(e.to_string()))?;
+        node_wire::replace_file(&path, &reply.body).map_err(|e| DirectError::Local(e.to_string()))?;
         if let Some(tag) = reply.headers.get("etag") {
             etags.insert(key, tag.clone());
         }
@@ -1303,6 +1337,15 @@ mod tests {
         let got = sync_any(&m, &["127.0.0.1:1".into(), new_addr.clone()], cache.path(), &mut etags).unwrap();
         assert_eq!(got, Some(new_addr));
         moved.stop();
+    }
+
+    #[test]
+    fn explains_connection_failures_in_words() {
+        // Nothing listens on port 1 here.
+        let err = hello("127.0.0.1:1").unwrap_err().to_string();
+        assert!(err.contains("nothing is accepting connections"), "{err}");
+        let err = hello("no-such-host.invalid:47390").unwrap_err().to_string();
+        assert!(err.contains("doesn't lead anywhere"), "{err}");
     }
 
     #[test]

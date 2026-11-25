@@ -1182,6 +1182,27 @@ pub struct MachineProbe {
     /// It's this machine.
     pub is_self: bool,
     pub already_paired: bool,
+    /// Why it can't be paired as is (a version that can't share with this
+    /// one), in words for the user.
+    pub problem: Option<String>,
+}
+
+/// Why `hello` can't share with this build, if it can't.
+fn version_problem(hello: &lunopeak_core::direct::Hello) -> Option<String> {
+    use std::cmp::Ordering;
+    match hello.schema.cmp(&lunopeak_core::node_wire::SCHEMA) {
+        Ordering::Equal => None,
+        Ordering::Greater => Some(format!(
+            "It runs LunoPeak {}, newer than this one ({}). Update LunoPeak here first.",
+            hello.version,
+            lunopeak_core::VERSION
+        )),
+        Ordering::Less => Some(format!(
+            "It runs LunoPeak {}, older than this one ({}). Update it there first.",
+            hello.version,
+            lunopeak_core::VERSION
+        )),
+    }
 }
 
 fn app_dir_or_err() -> Result<std::path::PathBuf, String> {
@@ -1209,6 +1230,33 @@ pub async fn get_paired_machines(
                 }
             })
             .collect())
+    })
+    .await
+}
+
+/// What's in the shared folder, for Settings: whether it's there at all
+/// (a disconnected drive or share looks like a missing folder) and how many
+/// machines have written to it.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderCheck {
+    pub exists: bool,
+    pub machines: usize,
+}
+
+#[tauri::command]
+pub async fn check_shared_folder(path: String) -> Result<FolderCheck, String> {
+    blocking(move || {
+        let root = std::path::PathBuf::from(&path);
+        let exists = root.is_dir();
+        let machines = std::fs::read_dir(root.join(lunopeak_core::node_wire::NODES_DIR))
+            .map(|rd| {
+                rd.flatten()
+                    .filter(|e| lunopeak_core::node_wire::is_machine_id(&e.file_name().to_string_lossy()))
+                    .count()
+            })
+            .unwrap_or(0);
+        Ok(FolderCheck { exists, machines })
     })
     .await
 }
@@ -1291,6 +1339,7 @@ pub async fn probe_machine(addr: String) -> Result<MachineProbe, String> {
         let hello = lunopeak_core::direct::hello(&addr).map_err(|e| e.to_string())?;
         let paired = lunopeak_core::direct::paired_machines(&app_dir_or_err()?);
         Ok(MachineProbe {
+            problem: version_problem(&hello),
             is_self: Some(&hello.machine_id) == lunopeak_core::node_wire::local_machine_id().as_ref(),
             already_paired: paired.iter().any(|m| m.machine_id == hello.machine_id),
             addr,
@@ -1317,6 +1366,11 @@ pub async fn pair_machine(
         let me = lunopeak_core::node_wire::local_machine_id()
             .ok_or_else(|| "Couldn't read this machine's id".to_string())?;
         let my_name = lunopeak_core::node_wire::default_name().unwrap_or_else(|| "LunoPeak".into());
+        // Don't spend a pairing try on a machine whose data couldn't be read.
+        let hello = lunopeak_core::direct::hello(&addr).map_err(|e| e.to_string())?;
+        if let Some(problem) = version_problem(&hello) {
+            return Err(problem);
+        }
         let m = lunopeak_core::direct::pair(&addr, &code, &me, &my_name).map_err(|e| e.to_string())?;
         if m.machine_id == me {
             return Err("That's this machine.".into());

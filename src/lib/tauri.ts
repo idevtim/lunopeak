@@ -30,6 +30,7 @@ import type {
   DiscoveredMachine,
   ShareStatus,
   ShareHub,
+  FolderCheck,
   TerminalIntegrations,
   StatuslinePrefs,
   StatuslineSpan,
@@ -201,6 +202,8 @@ export const api = {
       error: null,
       updatedAt: 0,
     }),
+  checkSharedFolder: (path: string) =>
+    call<FolderCheck>("check_shared_folder", { path }, { exists: true, machines: 0 }),
   openSharePairing: () => call<string>("open_share_pairing"),
   closeSharePairing: () => call<void>("close_share_pairing"),
   getShareHubs: () => call<ShareHub[]>("get_share_hubs", undefined, []),

@@ -238,6 +238,16 @@ export interface MachineProbe {
   pairingOpen: boolean;
   isSelf: boolean;
   alreadyPaired: boolean;
+  /** Why it can't be paired as is (versions that can't share). */
+  problem: string | null;
+}
+
+/** The shared folder's state. Mirrors `commands::FolderCheck`. */
+export interface FolderCheck {
+  /** False for a missing folder or a disconnected drive or share. */
+  exists: boolean;
+  /** Machines that have written to it. */
+  machines: number;
 }
 
 /** Spend on one machine. Mirrors `hub::MachineCost`. */
