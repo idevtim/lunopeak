@@ -386,11 +386,29 @@ if $SIGNING_ENABLED && [ -n "$APPIMAGE_PATH" ]; then
   echo "✓ Updater payload: $UPDATER_PATH (+ .sig)"
 fi
 
+# ─── lunopeak-node (shares a machine without the app) ───────────────────────
+# Shipped under a version-free name so installers can always fetch
+# releases/latest/download/lunopeak-node-linux-<arch>.tar.gz.
+echo "🔨 Building lunopeak-node for $RUST_TARGET..."
+cargo build --release -p lunopeak-node --target "$RUST_TARGET" \
+  --manifest-path "$PROJECT_DIR/src-tauri/Cargo.toml"
+NODE_DIR="$BUNDLE_DIR/node"
+rm -rf "$NODE_DIR"
+mkdir -p "$NODE_DIR"
+cp "$PROJECT_DIR/src-tauri/target/$RUST_TARGET/release/lunopeak-node" "$NODE_DIR/"
+NODE_TARGZ="$NODE_DIR/lunopeak-node-linux-${RUST_TARGET%%-*}.tar.gz"
+tar -czf "$NODE_TARGZ" -C "$NODE_DIR" lunopeak-node
+if [ "$("$NODE_DIR/lunopeak-node" --version)" != "lunopeak-node $VERSION" ]; then
+  echo "❌ lunopeak-node reports $("$NODE_DIR/lunopeak-node" --version), expected $VERSION"
+  exit 1
+fi
+
 echo ""
 echo "✅ Build complete (v$VERSION):"
 [ -n "$DEB_PATH" ]      && echo "   deb:      $DEB_PATH"
 [ -n "$RPM_PATH" ]      && echo "   rpm:      $RPM_PATH"
 [ -n "$APPIMAGE_PATH" ] && echo "   AppImage: $APPIMAGE_PATH"
+echo "   node:     $NODE_TARGZ"
 
 # Early out before anything mutates git or the release repo. Deliberately
 # placed after the bundle summary so a --build-only run still reports where
@@ -415,6 +433,7 @@ ASSETS=()
 [ -n "$DEB_PATH" ]      && ASSETS+=("$DEB_PATH")
 [ -n "$RPM_PATH" ]      && ASSETS+=("$RPM_PATH")
 [ -n "$APPIMAGE_PATH" ] && ASSETS+=("$APPIMAGE_PATH")
+ASSETS+=("$NODE_TARGZ" "$SCRIPT_DIR/install-node.sh" "$SCRIPT_DIR/install-node.ps1")
 
 if $SIGNING_ENABLED && [ -n "$UPDATER_PATH" ]; then
   # If updater payload is the AppImage itself, it's already in $ASSETS.

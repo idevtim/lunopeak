@@ -270,6 +270,36 @@ spctl --assess --type execute --verbose "$APP_PATH" 2>&1 | tail -5 || {
   echo "⚠️  spctl assessment failed; the app may still work but Gatekeeper will warn."
 }
 
+# ─── lunopeak-node (shares a machine without the app) ───────────────────────
+# A plain CLI, so it isn't stapled (only bundles take a ticket); it's signed
+# with the hardened runtime and notarized, and Gatekeeper finds the ticket
+# online. Shipped under a version-free name so installers can always fetch
+# releases/latest/download/lunopeak-node-macos-universal.tar.gz.
+echo "🔨 Building lunopeak-node (universal)..."
+NODE_DIR="$BUNDLE_DIR/node"
+rm -rf "$NODE_DIR"
+mkdir -p "$NODE_DIR"
+for triple in aarch64-apple-darwin x86_64-apple-darwin; do
+  cargo build --release -p lunopeak-node --target "$triple" \
+    --manifest-path "$PROJECT_DIR/src-tauri/Cargo.toml"
+done
+lipo -create -output "$NODE_DIR/lunopeak-node" \
+  "$PROJECT_DIR/src-tauri/target/aarch64-apple-darwin/release/lunopeak-node" \
+  "$PROJECT_DIR/src-tauri/target/x86_64-apple-darwin/release/lunopeak-node"
+codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$NODE_DIR/lunopeak-node"
+NODE_ZIP="$NODE_DIR/lunopeak-node-notarize.zip"
+ditto -c -k "$NODE_DIR/lunopeak-node" "$NODE_ZIP"
+echo "📤 Notarizing lunopeak-node..."
+node "$SCRIPT_DIR/notarize.mjs" "$NODE_ZIP"
+rm -f "$NODE_ZIP"
+NODE_TARGZ="$NODE_DIR/lunopeak-node-macos-universal.tar.gz"
+COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -czf "$NODE_TARGZ" -C "$NODE_DIR" lunopeak-node
+if [ "$("$NODE_DIR/lunopeak-node" --version)" != "lunopeak-node $VERSION" ]; then
+  echo "❌ lunopeak-node reports $("$NODE_DIR/lunopeak-node" --version), expected $VERSION"
+  exit 1
+fi
+echo "✓ $NODE_TARGZ"
+
 echo ""
 echo "✅ Build complete: $DMG_PATH (v$VERSION)"
 
@@ -282,7 +312,7 @@ if gh auth status >/dev/null 2>&1; then
 
   # Build the asset list. DMG is always uploaded (first-install download).
   # Updater payload (.app.tar.gz + .sig) and latest.json only when signing.
-  ASSETS=("$DMG_PATH")
+  ASSETS=("$DMG_PATH" "$NODE_TARGZ" "$SCRIPT_DIR/install-node.sh" "$SCRIPT_DIR/install-node.ps1")
 
   if $SIGNING_ENABLED; then
     ASSETS+=("$TARGZ_PATH" "$SIG_PATH")

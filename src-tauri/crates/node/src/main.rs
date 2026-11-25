@@ -16,6 +16,8 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+mod service;
+
 use lunopeak_core::direct;
 use lunopeak_core::feeds::Sources;
 use lunopeak_core::models::AgentSources;
@@ -30,6 +32,12 @@ USAGE:
     lunopeak-node pair             Show a code to pair a LunoPeak app with
     lunopeak-node hubs             List the apps this machine shares with
     lunopeak-node unpair <NAME>    Stop sharing with one of them
+    lunopeak-node install [OPTIONS]
+                                   Keep it running in the background, started
+                                   at login (shares directly unless --out is
+                                   given; takes the same options as below)
+    lunopeak-node uninstall        Remove that background service
+    lunopeak-node status           Show the service, machine id and pairings
 
 WHERE TO PUBLISH (one or both):
     --listen                  Share directly with paired LunoPeak apps over an
@@ -66,6 +74,10 @@ enum Command {
     Pair { state_dir: Option<PathBuf> },
     Hubs { state_dir: Option<PathBuf> },
     Unpair { state_dir: Option<PathBuf>, who: String },
+    /// Register `lunopeak-node <args>` to run in the background at login.
+    Install { state_dir: Option<PathBuf>, args: Vec<String> },
+    Uninstall,
+    Status { state_dir: Option<PathBuf> },
 }
 
 struct Args {
@@ -95,6 +107,55 @@ fn main() {
         Command::Pair { state_dir } => pair(&state_dir_or_exit(state_dir)),
         Command::Hubs { state_dir } => hubs(&state_dir_or_exit(state_dir)),
         Command::Unpair { state_dir, who } => unpair(&state_dir_or_exit(state_dir), &who),
+        Command::Install { state_dir, args } => install(&state_dir_or_exit(state_dir), &args),
+        Command::Uninstall => match service::uninstall() {
+            Ok(()) => println!("Removed the background service. Pairings are kept; `lunopeak-node install` brings it back."),
+            Err(e) => fail(&e),
+        },
+        Command::Status { state_dir } => status(&state_dir_or_exit(state_dir)),
+    }
+}
+
+fn install(state_dir: &Path, args: &[String]) {
+    match service::install(state_dir, args) {
+        Ok(notes) => {
+            println!("Installed: lunopeak-node {} now runs in the background.", args.join(" "));
+            for n in notes {
+                println!("  {n}");
+            }
+            if direct::paired_hubs(state_dir).is_empty() && args.iter().any(|a| a == "--listen" || a.starts_with("--bind")) {
+                println!(
+                    "\nNext, pair it: run `{} pair` and enter the code in LunoPeak on your other computer.",
+                    service::installed_path(state_dir).display()
+                );
+            }
+        }
+        Err(e) => fail(&format!("install failed: {e}")),
+    }
+}
+
+fn status(state_dir: &Path) {
+    let (installed, running) = service::status();
+    println!(
+        "Background service: {}",
+        match (installed, running) {
+            (false, _) => "not installed (run `lunopeak-node install`)",
+            (true, Some(true)) => "installed, running",
+            (true, Some(false)) => "installed, not running",
+            (true, None) => "installed",
+        }
+    );
+    match node_wire::machine_id(state_dir) {
+        Ok(id) => println!("Machine id: {id}"),
+        Err(e) => println!("Machine id: unreadable ({e})"),
+    }
+    let hubs = direct::paired_hubs(state_dir);
+    println!("Paired apps: {}", if hubs.is_empty() { "none".to_string() } else { hubs.len().to_string() });
+    for h in hubs {
+        println!("  {}", h.hub_name);
+    }
+    if direct::pairing_open(state_dir) {
+        println!("A pairing code is open.");
     }
 }
 
@@ -260,6 +321,32 @@ fn sources() -> Sources {
 
 /// `Ok(None)` means help or version was printed and there's nothing to run.
 fn parse_args(raw: Vec<String>) -> Result<Option<Command>, String> {
+    // Service commands come first on the line.
+    match raw.first().map(String::as_str) {
+        Some("install") => {
+            let mut args: Vec<String> = raw[1..].to_vec();
+            let shares = args
+                .iter()
+                .any(|a| a == "--listen" || a == "--out" || a.starts_with("--bind") || a.starts_with("--out="));
+            if !shares {
+                // Installing with no target means sharing directly.
+                args.insert(0, "--listen".into());
+            }
+            if args.iter().any(|a| a == "--once") {
+                return Err("install runs the node continuously; drop --once".into());
+            }
+            // Check the flags now, not when the service fails to start.
+            let Some(Command::Run(run)) = parse_args(args.clone())? else {
+                return Err("install takes the same options as running the node".into());
+            };
+            return Ok(Some(Command::Install {
+                state_dir: run.state_dir,
+                args,
+            }));
+        }
+        Some("uninstall") if raw.len() == 1 => return Ok(Some(Command::Uninstall)),
+        _ => {}
+    }
     let mut out = None;
     let mut listen = false;
     let mut bind: Option<String> = None;
@@ -321,6 +408,7 @@ fn parse_args(raw: Vec<String>) -> Result<Option<Command>, String> {
             }))
         }
         Some("unpair") => return Err("unpair needs the app's name or id".into()),
+        Some("status") if words.len() == 1 => return Ok(Some(Command::Status { state_dir })),
         Some(other) => return Err(format!("unknown command: {other}")),
         None => {}
     }
@@ -382,6 +470,13 @@ mod tests {
         let p = |a: &[&str]| parse_args(a.iter().map(|s| s.to_string()).collect());
         assert!(matches!(p(&["pair"]), Ok(Some(Command::Pair { .. }))));
         assert!(matches!(p(&["unpair", "My Mac"]), Ok(Some(Command::Unpair { .. }))));
+        let Ok(Some(Command::Install { args, .. })) = p(&["install", "--name", "Build box"]) else { panic!() };
+        assert_eq!(args, ["--listen", "--name", "Build box"]);
+        let Ok(Some(Command::Install { args, .. })) = p(&["install", "--out", "/srv/sync"]) else { panic!() };
+        assert_eq!(args, ["--out", "/srv/sync"]);
+        assert!(p(&["install", "--once"]).is_err());
+        assert!(p(&["install", "--bogus"]).is_err());
+        assert!(matches!(p(&["status"]), Ok(Some(Command::Status { .. }))));
         assert!(p(&["--name", "x"]).is_err(), "needs --listen or --out");
         let Ok(Some(Command::Run(a))) = p(&["--listen", "--name", "x"]) else { panic!() };
         assert_eq!(a.listen, Some(SocketAddr::from(([0, 0, 0, 0], direct::DEFAULT_PORT))));

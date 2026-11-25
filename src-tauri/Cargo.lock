@@ -3110,6 +3110,7 @@ dependencies = [
 name = "lunopeak-node"
 version = "0.0.0"
 dependencies = [
+ "dirs 5.0.1",
  "lunopeak-core",
  "serde",
  "serde_json",

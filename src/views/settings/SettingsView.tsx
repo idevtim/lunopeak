@@ -1056,6 +1056,36 @@ function ShareThisMachine({ s, update }: { s: Settings; update: Update }) {
   );
 }
 
+const NODE_INSTALL_UNIX =
+  "curl -fsSL https://github.com/idevtim/lunopeak/releases/latest/download/install-node.sh | sh";
+const NODE_INSTALL_WINDOWS =
+  "irm https://github.com/idevtim/lunopeak/releases/latest/download/install-node.ps1 | iex";
+
+/** A one-line installer with a copy button. */
+function InstallLine({ label, command }: { label: string; command: string }) {
+  return (
+    <span className="flex flex-col gap-1">
+      <span className="text-[11.5px] text-zinc-500 dark:text-zinc-400">{label}</span>
+      <span className="flex items-center gap-2">
+        <code className="min-w-0 flex-1 truncate rounded-md bg-black/[0.04] px-2 py-1 font-mono text-[11.5px] text-zinc-800 dark:bg-white/[0.06] dark:text-zinc-200">
+          {command}
+        </code>
+        <Button
+          variant="ghost"
+          onClick={() =>
+            void navigator.clipboard
+              ?.writeText(command)
+              .then(() => toast.success("Copied"))
+              .catch(() => toast.error("Couldn't copy"))
+          }
+        >
+          Copy
+        </Button>
+      </span>
+    </span>
+  );
+}
+
 /** Find a machine by address, then pair with the code it shows. */
 function AddMachine({ paired, onPaired }: { paired: PairedMachine[]; onPaired: () => void }) {
   const found = useQuery({ ...queries.discoveredMachines, refetchInterval: 3_000 });
@@ -1114,11 +1144,12 @@ function AddMachine({ paired, onPaired }: { paired: PairedMachine[]; onPaired: (
     <SettingBlock keywords="add pair machine address code listen node" className="flex flex-col gap-2.5">
       <span className="text-[13px] font-medium text-zinc-900 dark:text-zinc-100">Add a machine</span>
       <p className="m-0 text-xs text-zinc-500 dark:text-zinc-400">
-        On the other computer, run{" "}
-        <code className="font-mono text-[11.5px]">lunopeak-node --listen</code>, then{" "}
-        <code className="font-mono text-[11.5px]">lunopeak-node pair</code> for a code. Pick it below, or enter
-        its address (a Tailscale address works too).
+        If it has LunoPeak, turn on Share this machine there. Otherwise (a server, say), paste one line in its
+        terminal: it installs the sharer, keeps it running and shows a pairing code. Then pick the machine below,
+        or enter its address (a Tailscale address works too).
       </p>
+      <InstallLine label="Mac or Linux" command={NODE_INSTALL_UNIX} />
+      <InstallLine label="Windows (PowerShell)" command={NODE_INSTALL_WINDOWS} />
       {nearby.length > 0 ? (
         <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
           {nearby.map((d) => (
