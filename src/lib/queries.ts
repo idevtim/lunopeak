@@ -125,6 +125,16 @@ export const queries = {
     queryFn: api.getDiscoveredMachines,
     staleTime: 2 * 1000,
   },
+  shareStatus: {
+    queryKey: ["share-status"] as const,
+    queryFn: api.getShareStatus,
+    staleTime: 2 * 1000,
+  },
+  shareHubs: {
+    queryKey: ["share-hubs"] as const,
+    queryFn: api.getShareHubs,
+    staleTime: 2 * 1000,
+  },
   pairedMachines: {
     queryKey: ["paired-machines"] as const,
     queryFn: api.getPairedMachines,

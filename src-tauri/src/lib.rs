@@ -1,6 +1,7 @@
 mod app_menu;
 mod commands;
 mod direct_link;
+mod sharing;
 mod logger;
 #[cfg(target_os = "macos")]
 mod macos_agent;
@@ -135,6 +136,9 @@ pub fn run() {
                     let _ = window.destroy();
                 }
                 macos_agent::record_agent(app.handle());
+                // "Share this machine" lives here: this process is up
+                // whenever LunoPeak is, the window process isn't.
+                sharing::start(app.handle().clone());
                 if let Err(err) = tray::install(app.handle()) {
                     crate::elog!(error, "tray", "install failed: {err}");
                 }
@@ -170,6 +174,9 @@ pub fn run() {
             }
             // Keep directly paired machines' data fresh (window process only).
             direct_link::start(app.handle().clone());
+            // Windows and Linux run one process, so it shares too.
+            #[cfg(not(target_os = "macos"))]
+            sharing::start(app.handle().clone());
             apply_window_effects(app)?;
             // Restore geometry after vibrancy/decoration changes have settled —
             // dropping decorations on Windows/Linux shifts the window.
@@ -295,6 +302,11 @@ pub fn run() {
             commands::probe_machine,
             commands::pair_machine,
             commands::unpair_machine,
+            commands::get_share_status,
+            commands::open_share_pairing,
+            commands::close_share_pairing,
+            commands::get_share_hubs,
+            commands::remove_share_hub,
             commands::get_terminal_integrations,
             commands::preview_statusline,
             commands::set_claude_statusline,

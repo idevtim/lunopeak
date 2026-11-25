@@ -1213,6 +1213,68 @@ pub async fn get_paired_machines(
     .await
 }
 
+/// Whether "Share this machine" is running, from the sharing process.
+#[tauri::command]
+pub async fn get_share_status() -> Result<crate::sharing::ShareStatus, String> {
+    blocking(|| Ok(crate::sharing::read_status())).await
+}
+
+/// Open a pairing window for this machine and return its code.
+#[tauri::command]
+pub async fn open_share_pairing() -> Result<String, String> {
+    blocking(|| {
+        if !crate::sharing::read_status().running {
+            return Err("Sharing isn't running yet. Turn on Share this machine and wait a few seconds.".into());
+        }
+        lunopeak_core::direct::open_pairing(&app_dir_or_err()?).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn close_share_pairing() -> Result<(), String> {
+    blocking(|| {
+        lunopeak_core::direct::close_pairing(&app_dir_or_err()?);
+        Ok(())
+    })
+    .await
+}
+
+/// An app this machine shares with. The token hash stays in Rust.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareHub {
+    pub hub_id: String,
+    pub hub_name: String,
+    pub paired_at: i64,
+}
+
+#[tauri::command]
+pub async fn get_share_hubs() -> Result<Vec<ShareHub>, String> {
+    blocking(|| {
+        Ok(lunopeak_core::direct::paired_hubs(&app_dir_or_err()?)
+            .into_iter()
+            .map(|h| ShareHub {
+                hub_id: h.hub_id,
+                hub_name: h.hub_name,
+                paired_at: h.paired_at,
+            })
+            .collect())
+    })
+    .await
+}
+
+/// Stop sharing with one app. It finds out on its next fetch.
+#[tauri::command]
+pub async fn remove_share_hub(hub_id: String) -> Result<(), String> {
+    blocking(move || {
+        lunopeak_core::direct::unpair_hub(&app_dir_or_err()?, &hub_id)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
 /// Sharing machines advertised on the local network, minus this one.
 #[tauri::command]
 pub async fn get_discovered_machines(

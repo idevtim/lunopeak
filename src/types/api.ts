@@ -154,12 +154,38 @@ export interface Settings {
   statusline: StatuslinePrefs;
   /** Other machines' sessions, published by `lunopeak-node`. */
   remote: RemoteHubPrefs;
+  share: SharePrefs;
 }
 
 export interface RemoteHubPrefs {
   enabled: boolean;
   /** The folder the nodes write to (`--out`); its `nodes/` subfolder is read. */
   folder: string | null;
+}
+
+/** Sharing this machine from the app. Mirrors `models::SharePrefs`. */
+export interface SharePrefs {
+  enabled: boolean;
+  /** Name other machines see; the host name when null. */
+  name: string | null;
+  sharePrompts: boolean;
+}
+
+/** What the sharing process last did. Mirrors `sharing::ShareStatus`. */
+export interface ShareStatus {
+  running: boolean;
+  name: string | null;
+  port: number | null;
+  discoverable: boolean;
+  error: string | null;
+  updatedAt: number;
+}
+
+/** An app this machine shares with. Mirrors `commands::ShareHub`. */
+export interface ShareHub {
+  hubId: string;
+  hubName: string;
+  pairedAt: number;
 }
 
 /** One machine publishing through `lunopeak-node`. Mirrors `hub::RemoteNode`. */

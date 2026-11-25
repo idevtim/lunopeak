@@ -14,14 +14,13 @@
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use lunopeak_core::direct;
-use lunopeak_core::feeds::{self, Sources};
-use lunopeak_core::models::{AgentSources, Session};
-use lunopeak_core::node_wire::{self, Envelope, LiveData, RemoteSession, SessionsData};
-use lunopeak_core::scanners;
-use serde::Serialize;
+use lunopeak_core::feeds::Sources;
+use lunopeak_core::models::AgentSources;
+use lunopeak_core::node_wire;
+use lunopeak_core::share::{Caches, Publishers, ShareConfig};
 
 const USAGE: &str = "\
 lunopeak-node: publish this machine's coding-agent sessions to a LunoPeak hub
@@ -58,10 +57,6 @@ OPTIONS:
 
 Which agents are read follows the LunoPeak app's settings on this machine
 when it's installed; otherwise Claude Code, Codex and Cursor are all read.";
-
-/// A live snapshot is rewritten at least this often even when nothing
-/// changed, so the hub can tell an idle node from one that's gone.
-const HEARTBEAT: Duration = Duration::from_secs(60);
 
 /// Folder under the state dir holding what `--listen` serves.
 const OUTBOX: &str = "outbox";
@@ -143,9 +138,19 @@ fn start(mut args: Args) {
         eprintln!("  writing to {}", out.join(node_wire::NODES_DIR).join(&args.machine_id).display());
     }
     // Publish once before serving, so a hub's first fetch finds data.
-    let mut publishers = Publishers::new(&dirs);
+    let cfg = ShareConfig {
+        machine_id: args.machine_id.clone(),
+        name: args.name.clone(),
+        share_prompts: args.share_prompts,
+    };
+    let mut publishers = Publishers::new(&dirs, args.sessions_interval);
     let caches = Caches::default();
-    publishers.tick(&args, &caches);
+    let tick = |p: &mut Publishers| {
+        for e in p.tick(&cfg, sources(), &caches) {
+            eprintln!("lunopeak-node: {e}");
+        }
+    };
+    tick(&mut publishers);
     if args.once {
         return;
     }
@@ -182,46 +187,7 @@ fn start(mut args: Args) {
     });
     loop {
         std::thread::sleep(args.interval);
-        publishers.tick(&args, &caches);
-    }
-}
-
-#[derive(Default)]
-struct Caches {
-    sessions: scanners::sessions::Cache,
-    codex: scanners::codex::Cache,
-}
-
-struct Publishers {
-    live: Publisher,
-    sessions: Publisher,
-    next_sessions: Instant,
-}
-
-impl Publishers {
-    fn new(dirs: &[PathBuf]) -> Self {
-        let files = |name: &str| dirs.iter().map(|d| d.join(name)).collect();
-        Publishers {
-            live: Publisher::new(files(node_wire::LIVE_FILE)),
-            sessions: Publisher::new(files(node_wire::SESSIONS_FILE)),
-            next_sessions: Instant::now(),
-        }
-    }
-
-    fn tick(&mut self, args: &Args, caches: &Caches) {
-        let src = sources();
-        let data = collect_live(src, args);
-        // A process's runtime and memory change on every scan; leave them
-        // out of the comparison so an idle machine isn't rewritten each tick.
-        // The heartbeat still refreshes them.
-        self.live
-            .publish(args, &data, node_wire::live_fingerprint(&data), Some(HEARTBEAT));
-        if Instant::now() >= self.next_sessions {
-            let data = collect_sessions(src, args, &caches.sessions, &caches.codex);
-            let fingerprint = serde_json::to_vec(&data).unwrap_or_default();
-            self.sessions.publish(args, &data, fingerprint, None);
-            self.next_sessions = Instant::now() + args.sessions_interval;
-        }
+        tick(&mut publishers);
     }
 }
 
@@ -290,143 +256,6 @@ fn sources() -> Sources {
         .filter(|a| a.initialized)
         .map(|a| Sources::from(&a))
         .unwrap_or(Sources::ALL)
-}
-
-fn collect_live(src: Sources, args: &Args) -> LiveData {
-    let mut data = LiveData {
-        activity: feeds::live_activity(src, 40),
-        contexts: feeds::live_contexts(src),
-        processes: feeds::active_processes(src),
-    };
-    if !args.share_prompts {
-        node_wire::redact_live(&mut data);
-    }
-    node_wire::stamp_live(&mut data, &args.name);
-    data
-}
-
-fn collect_sessions(
-    src: Sources,
-    args: &Args,
-    cache: &scanners::sessions::Cache,
-    codex_cache: &scanners::codex::Cache,
-) -> SessionsData {
-    let mut all: Vec<(&str, Session)> = Vec::new();
-    if src.claude {
-        match scanners::sessions::scan_all(cache) {
-            Ok(s) => all.extend(s.into_iter().map(|s| ("claude", s))),
-            Err(e) => lunopeak_core::elog!(error, "node", "claude session scan failed: {e:#}"),
-        }
-    }
-    if src.codex {
-        match scanners::codex::scan_all(codex_cache) {
-            Ok(s) => all.extend(s.into_iter().map(|s| ("codex", s))),
-            Err(e) => lunopeak_core::elog!(error, "node", "codex session scan failed: {e:#}"),
-        }
-    }
-    // Newest first, ties broken by id, so an unchanged history serializes to
-    // the same bytes and isn't rewritten.
-    all.sort_by(|(_, a), (_, b)| b.end_ts.cmp(&a.end_ts).then_with(|| a.id.cmp(&b.id)));
-    let sessions = all
-        .into_iter()
-        .map(|(agent, mut s)| {
-            if !args.share_prompts {
-                node_wire::redact_session(&mut s);
-            }
-            s.host = Some(args.name.clone());
-            RemoteSession::new(agent, s)
-        })
-        .collect();
-    SessionsData { sessions }
-}
-
-/// Writes one snapshot to each of its paths (the shared folder, the outbox
-/// `--listen` serves), skipping writes whose data hasn't changed so a sync
-/// tool isn't asked to ship the same bytes every few seconds.
-struct Publisher {
-    paths: Vec<PathBuf>,
-    /// Fingerprint of the last data written.
-    last_fingerprint: Option<Vec<u8>>,
-    last_write: Option<Instant>,
-}
-
-impl Publisher {
-    fn new(paths: Vec<PathBuf>) -> Self {
-        Publisher {
-            paths,
-            last_fingerprint: None,
-            last_write: None,
-        }
-    }
-
-    /// Write `data` unless its `fingerprint` matches the last write's.
-    /// `heartbeat`: also rewrite unchanged data once this much time passes.
-    fn publish<T: Serialize>(
-        &mut self,
-        args: &Args,
-        data: &T,
-        fingerprint: Vec<u8>,
-        heartbeat: Option<Duration>,
-    ) {
-        if !self.should_write(&fingerprint, heartbeat, Instant::now()) {
-            return;
-        }
-        let envelope = Envelope {
-            schema: node_wire::SCHEMA,
-            machine_id: args.machine_id.clone(),
-            name: args.name.clone(),
-            node_version: lunopeak_core::VERSION.to_string(),
-            os: std::env::consts::OS.to_string(),
-            generated_at: now_ms(),
-            includes_prompts: args.share_prompts,
-            data,
-        };
-        let mut ok = true;
-        for path in &self.paths {
-            if let Err(e) = write_atomic(path, &envelope) {
-                ok = false;
-                eprintln!("lunopeak-node: writing {} failed: {e}", path.display());
-                lunopeak_core::elog!(error, "node", "writing {} failed: {e}", path.display());
-            }
-        }
-        if ok {
-            self.last_fingerprint = Some(fingerprint);
-            self.last_write = Some(Instant::now());
-        }
-    }
-}
-
-impl Publisher {
-    fn should_write(&self, fingerprint: &[u8], heartbeat: Option<Duration>, now: Instant) -> bool {
-        let Some(at) = self.last_write else {
-            return true;
-        };
-        self.last_fingerprint.as_deref() != Some(fingerprint)
-            || heartbeat.is_some_and(|every| now.duration_since(at) >= every)
-    }
-}
-
-/// Write to a temp file in the same folder, then rename over the target, so
-/// the hub (or the sync tool) never reads half a file. The temp name starts
-/// with a dot so sync tools that skip hidden files don't ship it.
-fn write_atomic<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
-    let bytes = serde_json::to_vec(value).map_err(std::io::Error::other)?;
-    let name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("snapshot");
-    let tmp = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path).inspect_err(|_| {
-        let _ = std::fs::remove_file(&tmp);
-    })
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 /// `Ok(None)` means help or version was printed and there's nothing to run.
@@ -547,22 +376,6 @@ fn secs(v: &str, name: &str) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn writes_only_on_change_or_heartbeat() {
-        let mut p = Publisher::new(vec![PathBuf::from("unused")]);
-        let t0 = Instant::now();
-        assert!(p.should_write(b"a", None, t0), "first write always happens");
-
-        p.last_fingerprint = Some(b"a".to_vec());
-        p.last_write = Some(t0);
-        assert!(!p.should_write(b"a", None, t0 + Duration::from_secs(3600)));
-        assert!(p.should_write(b"b", None, t0));
-
-        let beat = Some(Duration::from_secs(60));
-        assert!(!p.should_write(b"a", beat, t0 + Duration::from_secs(59)));
-        assert!(p.should_write(b"a", beat, t0 + Duration::from_secs(60)));
-    }
 
     #[test]
     fn parses_commands_and_bind_addresses() {

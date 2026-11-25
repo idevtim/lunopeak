@@ -28,6 +28,8 @@ import type {
   PairedMachine,
   MachineProbe,
   DiscoveredMachine,
+  ShareStatus,
+  ShareHub,
   TerminalIntegrations,
   StatuslinePrefs,
   StatuslineSpan,
@@ -189,6 +191,20 @@ export const api = {
   probeMachine: (addr: string) => call<MachineProbe>("probe_machine", { addr }),
   pairMachine: (addr: string, code: string) => call<string>("pair_machine", { addr, code }),
   unpairMachine: (machineId: string) => call<void>("unpair_machine", { machineId }),
+  // Sharing this machine (Settings → Share this machine).
+  getShareStatus: () =>
+    call<ShareStatus>("get_share_status", undefined, {
+      running: false,
+      name: null,
+      port: null,
+      discoverable: false,
+      error: null,
+      updatedAt: 0,
+    }),
+  openSharePairing: () => call<string>("open_share_pairing"),
+  closeSharePairing: () => call<void>("close_share_pairing"),
+  getShareHubs: () => call<ShareHub[]>("get_share_hubs", undefined, []),
+  removeShareHub: (hubId: string) => call<void>("remove_share_hub", { hubId }),
 
   // Terminal status lines
   getTerminalIntegrations: () =>

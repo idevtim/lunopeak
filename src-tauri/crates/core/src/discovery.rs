@@ -110,7 +110,7 @@ impl Browser {
             .lock()
             .map(|s| s.values().cloned().collect())
             .unwrap_or_default();
-        out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        out.sort_by_key(|d| (d.name.to_lowercase(), d.machine_id.clone()));
         out.dedup_by(|a, b| a.machine_id == b.machine_id);
         out
     }

@@ -15,6 +15,7 @@ pub mod node_wire;
 pub mod pricing;
 pub mod process_ext;
 pub mod scanners;
+pub mod share;
 pub mod statusline;
 
 /// The app's release version (the `[package] version` of `src-tauri/Cargo.toml`,

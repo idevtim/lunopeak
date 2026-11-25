@@ -63,6 +63,7 @@ import type {
   Settings,
   MachineProbe,
   PairedMachine,
+  ShareHub,
   SidebarPlanUsage,
   TrayHeadlineWindow,
   TrayPinnedProvider,
@@ -719,6 +720,7 @@ function AgentsCategory({ s, update, platform }: { s: Settings; update: Update; 
       </SettingsSection>
 
       <OtherMachines s={s} update={update} />
+      <ShareThisMachine s={s} update={update} />
     </>
   );
 }
@@ -863,6 +865,193 @@ function OtherMachines({ s, update }: { s: Settings; update: Update }) {
           </span>
         }
       />
+    </SettingsSection>
+  );
+}
+
+/** Letting LunoPeak on other computers show this one. */
+function ShareThisMachine({ s, update }: { s: Settings; update: Update }) {
+  const share = s.share;
+  const qc = useQueryClient();
+  const status = useQuery({ ...queries.shareStatus, refetchInterval: share.enabled ? 3_000 : false });
+  const hubs = useQuery({ ...queries.shareHubs, enabled: share.enabled, refetchInterval: 3_000 });
+  const [code, setCode] = useState<{ code: string; expires: number; before: string[] } | null>(null);
+  const [name, setName] = useState(share.name ?? "");
+  useEffect(() => setName(share.name ?? ""), [share.name]);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!code) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [code]);
+
+  const setShare = (patch: Partial<Settings["share"]>) =>
+    update((cur) => ({ ...cur, share: { ...cur.share, ...patch } }));
+  const st = status.data;
+  const hubList = hubs.data ?? [];
+
+  // A new app showed up while the code was on screen: pairing worked.
+  useEffect(() => {
+    if (!code) return;
+    const fresh = hubList.find((h) => !code.before.includes(h.hubId));
+    if (fresh) {
+      toast.success(`Paired with ${fresh.hubName}`);
+      setCode(null);
+    } else if (now > code.expires) {
+      setCode(null);
+    }
+  }, [hubList, code, now]);
+
+  const startPairing = async () => {
+    if (!isTauri()) {
+      toast.info("Pairing needs the desktop app");
+      return;
+    }
+    try {
+      const c = await api.openSharePairing();
+      setNow(Date.now());
+      setCode({ code: c, expires: Date.now() + 10 * 60_000, before: hubList.map((h) => h.hubId) });
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+  const cancelPairing = async () => {
+    setCode(null);
+    if (isTauri()) await api.closeSharePairing().catch(() => {});
+  };
+  const remove = async (h: ShareHub) => {
+    try {
+      await api.removeShareHub(h.hubId);
+      toast.success(`${h.hubName} can no longer see this machine`);
+    } catch (e) {
+      toast.error(String(e));
+    }
+    void qc.invalidateQueries({ queryKey: queries.shareHubs.queryKey });
+  };
+
+  const left = code ? Math.max(0, Math.round((code.expires - now) / 1000)) : 0;
+  const statusText = !share.enabled
+    ? null
+    : st?.error
+      ? null
+      : st?.running
+        ? `Sharing as ${st.name ?? "this machine"} on port ${st.port ?? "?"}${st.discoverable ? ", visible on this network" : ""}.`
+        : "Starting…";
+
+  return (
+    <SettingsSection
+      title="Share this machine"
+      caption="Let LunoPeak on your other computers show this one's agents, history and spend."
+    >
+      <SettingRow
+        label="Share this machine"
+        hint="Only computers you pair can see it, over an encrypted connection. Keeps running from the menu bar when the window is closed."
+        keywords="share this machine pair remote other computers listen"
+        control={
+          <Switch
+            checked={share.enabled}
+            onChange={(v) => setShare({ enabled: v })}
+            ariaLabel="Share this machine"
+          />
+        }
+        below={
+          share.enabled && (statusText || st?.error) ? (
+            <span
+              className={cn(
+                "text-xs",
+                st?.error ? "text-rose-600 dark:text-rose-400" : "text-zinc-500 dark:text-zinc-400",
+              )}
+            >
+              {st?.error ?? statusText}
+            </span>
+          ) : undefined
+        }
+      />
+      <SettingRow
+        label="Name"
+        hint="What your other computers call this one."
+        keywords="share machine name"
+        dimmed={!share.enabled}
+        control={
+          <span className={cn(fieldClass, "w-[200px]")}>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={() => {
+                const next = name.trim() || null;
+                if (next !== share.name) setShare({ name: next });
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              }}
+              placeholder={st?.name ?? "This computer's name"}
+              maxLength={40}
+              aria-label="Machine name"
+              className="min-w-0 flex-1 bg-transparent text-[13px] text-zinc-900 outline-none dark:text-zinc-100"
+            />
+          </span>
+        }
+      />
+      <SettingRow
+        label="Share prompts"
+        hint="Also send what you typed to the agents and their chat replies. Off by default: other computers see files, commands and spend, not your prompts."
+        keywords="share prompts chat text privacy"
+        dimmed={!share.enabled}
+        control={
+          <Switch
+            checked={share.sharePrompts}
+            onChange={(v) => setShare({ sharePrompts: v })}
+            ariaLabel="Share prompts"
+          />
+        }
+      />
+      {share.enabled && (
+        <SettingBlock keywords="pair computer code share hubs" className="flex flex-col gap-2.5">
+          {code ? (
+            <div className="flex flex-col gap-1.5">
+              <span className="font-mono text-[22px] tracking-[0.2em] tabular-nums text-zinc-900 dark:text-zinc-100">
+                {code.code.slice(0, 3)} {code.code.slice(3)}
+              </span>
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                On your other computer, open Settings → Other machines, pick{" "}
+                <span className="font-mono">{st?.name ?? "this machine"}</span> and enter this code. Works once, for{" "}
+                {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}.
+              </span>
+              <span>
+                <Button variant="ghost" onClick={() => void cancelPairing()}>
+                  Cancel
+                </Button>
+              </span>
+            </div>
+          ) : (
+            <span className="flex items-center justify-between gap-3">
+              <span className="text-[13px] text-zinc-900 dark:text-zinc-100">
+                {hubList.length === 0 ? "No computers paired yet" : "Computers that can see this one"}
+              </span>
+              <Button disabled={!st?.running} onClick={() => void startPairing()}>
+                Pair a computer…
+              </Button>
+            </span>
+          )}
+          {hubList.length > 0 && (
+            <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+              {hubList.map((h) => (
+                <li key={h.hubId} className="flex items-center justify-between gap-3">
+                  <span className="text-[13px] text-zinc-900 dark:text-zinc-100">
+                    <span className="font-mono">{h.hubName}</span>
+                    <span className="ml-2 text-xs text-zinc-500 dark:text-zinc-400">
+                      paired {formatRelativeTime(h.pairedAt)}
+                    </span>
+                  </span>
+                  <Button variant="ghost" onClick={() => void remove(h)}>
+                    Remove
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SettingBlock>
+      )}
     </SettingsSection>
   );
 }

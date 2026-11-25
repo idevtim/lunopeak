@@ -309,6 +309,22 @@ pub struct Settings {
     /// Other machines' sessions, published by `lunopeak-node`.
     #[serde(default)]
     pub remote: RemoteHubPrefs,
+    #[serde(default)]
+    pub share: SharePrefs,
+}
+
+/// Sharing this machine with LunoPeak on other computers, from the app
+/// itself (what `lunopeak-node --listen` does on a machine without it).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SharePrefs {
+    pub enabled: bool,
+    /// Name other machines see; the host name when unset.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Include prompt and chat text. Off by default.
+    #[serde(default)]
+    pub share_prompts: bool,
 }
 
 /// Where to find the snapshots `lunopeak-node` writes on other machines.
@@ -359,6 +375,7 @@ impl Default for Settings {
             editor: EditorPrefs::default(),
             statusline: StatuslinePrefs::default(),
             remote: RemoteHubPrefs::default(),
+            share: SharePrefs::default(),
         }
     }
 }
