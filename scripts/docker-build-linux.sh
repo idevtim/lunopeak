@@ -108,6 +108,59 @@ for vol in "$VOL_NODE_MODULES" "$VOL_CARGO_REGISTRY" "$VOL_CARGO_GIT" "$VOL_TARG
   docker volume create "$vol" >/dev/null
 done
 
+# ─── lunopeak-node for aarch64 ──────────────────────────────────────────────
+# The main image is amd64, so build-linux.sh only builds the x86_64 node.
+# install-node.sh also sends ARM Linux to lunopeak-node-linux-aarch64.tar.gz,
+# so build that here in a native arm64 container (no emulation on Apple
+# Silicon) and hand it to build-linux.sh, which ships it with the rest and
+# refuses to release if any node install-node.sh names is missing.
+# Own target volume: the amd64 one holds x86_64 build-script binaries.
+NODE_IMAGE="lunopeak-node-build"
+NODE_DOCKERFILE="$PROJECT_DIR/docker/Dockerfile.node-build"
+VOL_NODE_ARM64_TARGET="lunopeak-node-arm64-target"
+EXTRA_NODES_DIR="${TMPDIR:-/tmp}/lunopeak-extra-nodes"
+
+if [ "$MODE" != "shell" ]; then
+  NODE_DF_HASH=$(shasum -a 256 "$NODE_DOCKERFILE" | cut -c1-16)
+  NODE_IMAGE_HASH=$(docker image inspect -f '{{index .Config.Labels "lunopeak.dockerfile"}}' "$NODE_IMAGE" 2>/dev/null || true)
+  if $FORCE_REBUILD || [ "$NODE_IMAGE_HASH" != "$NODE_DF_HASH" ]; then
+    echo "🐳 Building image $NODE_IMAGE (arm64)..."
+    docker build --platform linux/arm64 --label "lunopeak.dockerfile=$NODE_DF_HASH" \
+      -t "$NODE_IMAGE" -f "$NODE_DOCKERFILE" "$PROJECT_DIR/docker"
+  fi
+  docker volume create "$VOL_NODE_ARM64_TARGET" >/dev/null
+  docker volume create "$VOL_CARGO_REGISTRY" >/dev/null
+  rm -rf "$EXTRA_NODES_DIR"
+  mkdir -p "$EXTRA_NODES_DIR"
+  NODE_VERSION=$(grep -m1 '^version' "$PROJECT_DIR/src-tauri/Cargo.toml" | sed -E 's/version = "(.*)"/\1/')
+  echo "🔨 Building lunopeak-node for aarch64-unknown-linux-musl (static, native arm64)..."
+  docker run --platform linux/arm64 --rm \
+    -v "$PROJECT_DIR:/app:ro" \
+    -v "$VOL_CARGO_REGISTRY:/root/.cargo/registry" \
+    -v "$VOL_NODE_ARM64_TARGET:/target" \
+    -v "$EXTRA_NODES_DIR:/out" \
+    -e CARGO_TARGET_DIR=/target \
+    -e NODE_VERSION="$NODE_VERSION" \
+    "$NODE_IMAGE" bash -c '
+set -euo pipefail
+cargo build --locked --release -p lunopeak-node --target aarch64-unknown-linux-musl \
+  --manifest-path /app/src-tauri/Cargo.toml
+BIN=/target/aarch64-unknown-linux-musl/release/lunopeak-node
+if ! file "$BIN" | grep -q "statically linked"; then
+  echo "❌ aarch64 lunopeak-node is not statically linked: $(file "$BIN")"
+  exit 1
+fi
+if [ "$("$BIN" --version)" != "lunopeak-node $NODE_VERSION" ]; then
+  echo "❌ aarch64 lunopeak-node reports $("$BIN" --version), expected $NODE_VERSION"
+  exit 1
+fi
+STAGE=$(mktemp -d)
+cp "$BIN" "$STAGE/"
+tar -czf /out/lunopeak-node-linux-aarch64.tar.gz -C "$STAGE" lunopeak-node
+'
+  echo "✓ $EXTRA_NODES_DIR/lunopeak-node-linux-aarch64.tar.gz"
+fi
+
 # ─── Assemble docker run args ───────────────────────────────────────────────
 RUN_ARGS=(
   --platform linux/amd64
@@ -129,6 +182,8 @@ if [ -n "$GH_TOKEN_VALUE" ]; then
 fi
 if [ "$MODE" = "shell" ]; then
   RUN_ARGS+=(-it)
+else
+  RUN_ARGS+=(-v "$EXTRA_NODES_DIR:/extra-nodes:ro" -e "LUNOPEAK_EXTRA_NODES=/extra-nodes")
 fi
 
 # Guest-side prelude, shared by every mode.

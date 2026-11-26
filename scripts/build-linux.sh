@@ -420,13 +420,42 @@ if [ "$("$NODE_DIR/lunopeak-node" --version)" != "lunopeak-node $VERSION" ]; the
   echo "❌ lunopeak-node reports $("$NODE_DIR/lunopeak-node" --version), expected $VERSION"
   exit 1
 fi
+NODE_ASSETS=("$NODE_TARGZ")
+
+# Nodes for other arches, built elsewhere: docker-build-linux.sh builds the
+# aarch64 one in a native arm64 container and mounts it here.
+if [ -n "${LUNOPEAK_EXTRA_NODES:-}" ]; then
+  shopt -s nullglob
+  for extra in "$LUNOPEAK_EXTRA_NODES"/lunopeak-node-linux-*.tar.gz; do
+    cp "$extra" "$NODE_DIR/"
+    NODE_ASSETS+=("$NODE_DIR/$(basename "$extra")")
+  done
+  shopt -u nullglob
+fi
+
+# Every Linux node install-node.sh can ask for must ship, or the one-line
+# installer 404s on that arch (ARM Linux in 2.6.0 and 2.6.1).
+for wanted in $(grep -o 'lunopeak-node-linux-[A-Za-z0-9_]*\.tar\.gz' "$SCRIPT_DIR/install-node.sh" | sort -u); do
+  found=false
+  for have in "${NODE_ASSETS[@]}"; do
+    if [ "$(basename "$have")" = "$wanted" ]; then
+      found=true
+    fi
+  done
+  if ! $found; then
+    echo "❌ install-node.sh downloads $wanted, but this build doesn't produce it."
+    echo "   Run the Linux release from macOS (npm run dist:nix), which builds the aarch64"
+    echo "   node in an arm64 container, or set LUNOPEAK_EXTRA_NODES to a folder holding it."
+    exit 1
+  fi
+done
 
 echo ""
 echo "✅ Build complete (v$VERSION):"
 [ -n "$DEB_PATH" ]      && echo "   deb:      $DEB_PATH"
 [ -n "$RPM_PATH" ]      && echo "   rpm:      $RPM_PATH"
 [ -n "$APPIMAGE_PATH" ] && echo "   AppImage: $APPIMAGE_PATH"
-echo "   node:     $NODE_TARGZ"
+for n in "${NODE_ASSETS[@]}"; do echo "   node:     $n"; done
 
 # Early out before anything mutates git or the release repo. Deliberately
 # placed after the bundle summary so a --build-only run still reports where
@@ -451,7 +480,7 @@ ASSETS=()
 [ -n "$DEB_PATH" ]      && ASSETS+=("$DEB_PATH")
 [ -n "$RPM_PATH" ]      && ASSETS+=("$RPM_PATH")
 [ -n "$APPIMAGE_PATH" ] && ASSETS+=("$APPIMAGE_PATH")
-ASSETS+=("$NODE_TARGZ" "$SCRIPT_DIR/install-node.sh" "$SCRIPT_DIR/install-node.ps1")
+ASSETS+=("${NODE_ASSETS[@]}" "$SCRIPT_DIR/install-node.sh" "$SCRIPT_DIR/install-node.ps1")
 
 if $SIGNING_ENABLED && [ -n "$UPDATER_PATH" ]; then
   # If updater payload is the AppImage itself, it's already in $ASSETS.
